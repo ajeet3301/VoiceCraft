@@ -1,4 +1,7 @@
+import base64
 import datetime
+import gc
+import io
 import os
 import re
 import shutil
@@ -23,10 +26,13 @@ import soundfile as sf
 import torch
 import gradio as gr
 
-# Load environment configuration
+# Load environment & YAML configuration
 BASE_DIR = Path(__file__).resolve().parent
 ENV_PATH = BASE_DIR / ".env"
 load_dotenv(ENV_PATH, override=True)
+
+from config import load_config, save_config
+APP_CONFIG = load_config()
 
 from chatterbox.mtl_tts import ChatterboxMultilingualTTS, SUPPORTED_LANGUAGES
 
@@ -40,7 +46,7 @@ MY_VOICE_PATH = VOICES_DIR / "my_voice.wav"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 T3_MODEL = os.getenv("CHATTERBOX_MULTILINGUAL_T3_MODEL", "v3")
 
-# Set CPU threading optimization if running on CPU
+# Optimize CPU threads if running on CPU
 if DEVICE == "cpu":
     try:
         cores = os.cpu_count() or 4
@@ -56,7 +62,7 @@ BOT_PROCESS: subprocess.Popen | None = None
 
 
 def get_or_load_model() -> ChatterboxMultilingualTTS:
-    """Loads the ChatterboxMultilingualTTS model if not already loaded."""
+    """Loads the ChatterboxMultilingualTTS model if not already in memory."""
     global MODEL
     if MODEL is None:
         print("[VoiceCraft] Loading ChatterboxMultilingualTTS model into memory...")
@@ -90,7 +96,7 @@ except Exception as e:
 def split_text_into_chunks(text: str, max_chars: int = 250) -> list[str]:
     """
     Split text into sentence/clause chunks under max_chars for natural speech synthesis.
-    Supports English, Hindi (।), and all other multilingual punctuation marks.
+    Supports English, Hindi (।), East Asian (。), and multilingual punctuation.
     """
     text = text.strip()
     if not text:
@@ -99,7 +105,6 @@ def split_text_into_chunks(text: str, max_chars: int = 250) -> list[str]:
     paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
     all_sentences = []
 
-    # Match sentences ending with ., !, ?, Hindi Purna Viram (।), or East Asian (。)
     sentence_pattern = re.compile(r"([^.!?।。\n]+[.!?।。\n]*)")
 
     for para in paragraphs:
@@ -181,7 +186,6 @@ def save_voice_sample(audio_path: str | None):
         audio_data, sample_rate = read_audio_file(audio_path)
         sf.write(str(MY_VOICE_PATH), audio_data, sample_rate, subtype="PCM_16")
 
-        # Update model cached conditionals
         model = get_or_load_model()
         model.prepare_conditionals(str(MY_VOICE_PATH))
 
@@ -190,20 +194,181 @@ def save_voice_sample(audio_path: str | None):
         raise gr.Error(f"Failed to save voice sample: {str(e)}")
 
 
-def generate_speech(
+# --- Audio Processing & In-Memory Stitching Utilities ---
+
+def normalize_chunk_loudness(chunk: np.ndarray, target_peak: float = 0.95) -> np.ndarray:
+    """Normalize peak loudness of an in-memory chunk to maintain consistent volume without clipping."""
+    max_val = np.max(np.abs(chunk))
+    if max_val > 1e-4:
+        return (chunk * (target_peak / max_val)).astype(np.float32)
+    return chunk.astype(np.float32)
+
+
+def chunk_to_base64_wav(chunk: np.ndarray, sr: int) -> str:
+    """Encodes an in-memory float32 audio chunk into a base64 WAV data URL for live browser streaming."""
+    buf = io.BytesIO()
+    normalized = normalize_chunk_loudness(chunk, target_peak=0.95)
+    sf.write(buf, normalized, sr, format="WAV", subtype="PCM_16")
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    return f"data:audio/wav;base64,{b64}"
+
+
+def join_audio_chunks(
+    chunks: list[np.ndarray],
+    sr: int,
+    pause_ms: int = 200,
+    crossfade_ms: int = 30,
+) -> np.ndarray:
+    """
+    Joins in-memory audio chunks into ONE continuous stream:
+    - Normalizes loudness consistently across chunks
+    - Smooth crossfade transitions (20-50 ms) to prevent clicks or DC offsets
+    - Configurable natural silence pause between sentences
+    - Soft clipping limiter to guarantee peak never clips
+    """
+    if not chunks:
+        return np.zeros(0, dtype=np.float32)
+    if len(chunks) == 1:
+        return normalize_chunk_loudness(chunks[0])
+
+    normalized_chunks = [normalize_chunk_loudness(c) for c in chunks]
+    crossfade_samples = int(sr * (crossfade_ms / 1000.0))
+    pause_samples = int(sr * (pause_ms / 1000.0))
+
+    processed = []
+    for c in normalized_chunks:
+        item = c.copy()
+        if len(item) > 2 * crossfade_samples and crossfade_samples > 0:
+            fade_in = np.linspace(0.0, 1.0, crossfade_samples, dtype=np.float32)
+            fade_out = np.linspace(1.0, 0.0, crossfade_samples, dtype=np.float32)
+            item[:crossfade_samples] *= fade_in
+            item[-crossfade_samples:] *= fade_out
+        processed.append(item)
+
+    silence = np.zeros(pause_samples, dtype=np.float32) if pause_samples > 0 else np.zeros(0, dtype=np.float32)
+    stitched = []
+    for i, c in enumerate(processed):
+        stitched.append(c)
+        if i < len(processed) - 1 and len(silence) > 0:
+            stitched.append(silence)
+
+    final = np.concatenate(stitched)
+    peak = np.max(np.abs(final))
+    if peak > 0.98:
+        final = final * (0.95 / peak)
+    return final.astype(np.float32)
+
+
+def render_stream_player_html(
+    gen_id: str,
+    data_url: str | None = None,
+    chunk_idx: int = 0,
+    total_chunks: int = 1,
+    is_final: bool = False,
+    is_preparing: bool = False,
+) -> str:
+    """Renders the HTML/JS queue player that streams and plays chunks back-to-back without gap or disk I/O."""
+    if is_preparing:
+        return f"""
+        <div class="vc-stream-box" style="margin-top:8px; padding:12px; background:rgba(30,41,59,0.7); border:1px solid #3b82f6; border-radius:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong style="color:#60a5fa; font-size:13px;">⚡ Live Audio Stream</strong>
+            <span style="background:#eab308; color:#000; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600;">⏳ Synthesizing Chunk 1...</span>
+          </div>
+          <p style="font-size:12px; color:#94a3b8; margin:6px 0 0 0;">First audio chunk will play automatically in your browser the moment it is ready in memory.</p>
+        </div>
+        """
+
+    is_final_js = "true" if is_final else "false"
+    safe_data_url = data_url or ""
+
+    return f"""
+    <div class="vc-stream-box" style="margin-top:8px; padding:12px; background:rgba(30,41,59,0.7); border:1px solid #3b82f6; border-radius:10px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <strong style="color:#60a5fa; font-size:13px;">⚡ Live Audio Stream (In-Memory)</strong>
+        <span id="vc-stream-badge" style="background:#2563eb; color:#fff; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600;">
+          Streaming chunk {chunk_idx + 1} of {total_chunks}
+        </span>
+      </div>
+      <p id="vc-stream-desc" style="font-size:12px; color:#94a3b8; margin:0 0 8px 0;">Playing chunks back-to-back in RAM (zero temporary files written to disk).</p>
+      <audio id="vc-live-audio" controls autoplay style="width:100%; height:36px; border-radius:6px; outline:none;"></audio>
+    </div>
+    <script>
+    (function() {{
+      window._vcStreamState = window._vcStreamState || {{
+        id: null,
+        queue: [],
+        currentIndex: -1
+      }};
+      const state = window._vcStreamState;
+      const genId = "{gen_id}";
+      if (state.id !== genId) {{
+        state.id = genId;
+        state.queue = [];
+        state.currentIndex = -1;
+      }}
+      const newChunk = "{safe_data_url}";
+      const isFinal = {is_final_js};
+      const total = {total_chunks};
+      const audioEl = document.getElementById("vc-live-audio");
+
+      if (newChunk && newChunk.startsWith("data:audio") && !state.queue.includes(newChunk)) {{
+        state.queue.push(newChunk);
+      }}
+
+      function playNext() {{
+        if (state.currentIndex + 1 < state.queue.length) {{
+          state.currentIndex++;
+          audioEl.src = state.queue[state.currentIndex];
+          audioEl.play().catch(e => console.log("Stream audio play:", e));
+          const badge = document.getElementById("vc-stream-badge");
+          if (badge) badge.innerText = `Playing chunk ${{state.currentIndex + 1}} / ${{total}}`;
+        }} else if (isFinal) {{
+          const badge = document.getElementById("vc-stream-badge");
+          if (badge) {{
+            badge.innerText = "Stream Complete";
+            badge.style.background = "#10b981";
+          }}
+          const desc = document.getElementById("vc-stream-desc");
+          if (desc) desc.innerText = `All ${{total}} streamed chunks played! Master continuous audio is ready below.`;
+        }}
+      }}
+
+      audioEl.onended = function() {{
+        playNext();
+      }};
+
+      if (audioEl.paused && state.currentIndex < state.queue.length - 1) {{
+        playNext();
+      }}
+    }})();
+    </script>
+    """
+
+
+# --- Core Speech Generation Engine (Streaming & In-Memory Single File) ---
+
+def generate_speech_stream(
     text: str,
     language_code: str,
     audio_input_path: str | None,
     exaggeration: float = 0.5,
     cfg_weight: float = 0.5,
     temperature: float = 0.8,
+    stream_playback: bool = True,
+    pause_between_chunks_ms: int = 200,
+    crossfade_ms: int = 30,
+    keep_partial_on_cancel: bool = False,
     progress=gr.Progress(track_tqdm=True),
 ):
     """
-    Synthesize text into speech using the cloned voice.
-    Handles long text by splitting into sentences, generating each chunk,
-    and joining them into a single audio file with natural pauses.
-    Saves timestamped outputs to ./outputs/
+    Generator function that:
+    1. Splits text into sentence chunks and synthesizes chunk by chunk.
+    2. Keeps chunks ONLY IN MEMORY (tensors/numpy arrays); zero chunk files written to disk.
+    3. Streams each chunk to the browser in real time via an in-memory base64 queue player.
+    4. When all chunks finish, joins them into ONE continuous audio file (.\outputs\<timestamp>.wav).
+    5. Frees GPU/CPU memory after generation.
+    6. If cancelled, discards chunks (unless keep_partial_on_cancel is True).
     """
     if not text or not text.strip():
         raise gr.Error("Please enter some text to speak.")
@@ -221,19 +386,23 @@ def generate_speech(
         raise gr.Error("No valid text found to synthesize.")
 
     model = get_or_load_model()
+    gen_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    chunks_in_memory: list[np.ndarray] = []
+    sr = model.sr
+
+    # Yield initial preparing state
+    initial_html = render_stream_player_html(gen_id, is_preparing=True) if stream_playback else ""
+    yield initial_html, None, None, f"⏳ Initializing voice conditionals & synthesizing {len(chunks)} chunks..."
 
     try:
         model.prepare_conditionals(chosen_voice_path, exaggeration=float(exaggeration))
-
-        generated_segments = []
-        sr = model.sr
-        silence = np.zeros(int(0.2 * sr), dtype=np.float32)
 
         with torch.inference_mode():
             for idx, chunk in enumerate(chunks):
                 if progress:
                     progress((idx + 1) / len(chunks), desc=f"Synthesizing sentence {idx+1}/{len(chunks)}...")
-                print(f"[VoiceCraft] Synthesizing [{idx + 1}/{len(chunks)}]: '{chunk[:60]}...' (Lang: {language_code})")
+                print(f"[VoiceCraft] Synthesizing [{idx + 1}/{len(chunks)}]: '{chunk[:50]}...'")
+
                 wav = model.generate(
                     chunk,
                     language_id=language_code,
@@ -242,76 +411,183 @@ def generate_speech(
                     cfg_weight=float(cfg_weight),
                     temperature=float(temperature),
                 )
-                wav_np = wav.squeeze(0).cpu().numpy()
-                generated_segments.append(wav_np)
+                chunk_np = wav.squeeze(0).cpu().numpy().astype(np.float32)
+                chunks_in_memory.append(chunk_np)
 
-        full_audio_list = []
-        for i, seg in enumerate(generated_segments):
-            full_audio_list.append(seg)
-            if i < len(generated_segments) - 1:
-                full_audio_list.append(silence)
+                # Prepare in-memory base64 stream chunk
+                if stream_playback:
+                    chunk_data_url = chunk_to_base64_wav(chunk_np, sr)
+                    stream_html = render_stream_player_html(
+                        gen_id=gen_id,
+                        data_url=chunk_data_url,
+                        chunk_idx=idx,
+                        total_chunks=len(chunks),
+                        is_final=False,
+                    )
+                else:
+                    stream_html = ""
 
-        full_audio = np.concatenate(full_audio_list)
+                status_msg = f"⚡ **Streaming chunk {idx + 1} of {len(chunks)}** in memory..."
+                yield stream_html, None, None, status_msg
 
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_filename = f"voicecraft_{language_code}_{timestamp}.wav"
+        # All chunks generated in memory: Stitch into ONE continuous audio
+        print(f"[VoiceCraft] Joining {len(chunks_in_memory)} chunks into single continuous audio...")
+        final_audio = join_audio_chunks(
+            chunks_in_memory,
+            sr,
+            pause_ms=int(pause_between_chunks_ms),
+            crossfade_ms=int(crossfade_ms),
+        )
+
+        # Save EXACTLY ONE continuous file: .\outputs\<timestamp>.wav
+        output_filename = f"{gen_id}.wav"
         output_filepath = OUTPUTS_DIR / output_filename
-        sf.write(str(output_filepath), full_audio, sr, subtype="PCM_16")
-        print(f"[VoiceCraft] Saved output: {output_filepath}")
+        sf.write(str(output_filepath), final_audio, sr, subtype="PCM_16")
+        print(f"[VoiceCraft] Saved single continuous file: {output_filepath}")
 
-        duration_sec = len(full_audio) / sr
-        info_badge = f"✨ **Generation Complete**: `{output_filename}` | Duration: **{duration_sec:.1f}s** | Rate: **{sr} Hz**"
+        # Final stream player state
+        if stream_playback:
+            final_stream_html = render_stream_player_html(
+                gen_id=gen_id,
+                data_url=None,
+                chunk_idx=len(chunks) - 1,
+                total_chunks=len(chunks),
+                is_final=True,
+            )
+        else:
+            final_stream_html = ""
 
-        return str(output_filepath), str(output_filepath), info_badge
-    except gr.Error:
+        duration_sec = len(final_audio) / sr
+        info_badge = (
+            f"✨ **Generation Complete**: Single file saved to `outputs/{output_filename}` | "
+            f"Chunks: **{len(chunks_in_memory)}** | Duration: **{duration_sec:.1f}s** | Rate: **{sr} Hz**"
+        )
+
+        # Yield single master continuous file to Gradio Audio player and Download button
+        yield final_stream_html, str(output_filepath), str(output_filepath), info_badge
+
+    except GeneratorExit:
+        print("[VoiceCraft] Generation was cancelled by user.")
+        if keep_partial_on_cancel and chunks_in_memory:
+            print("[VoiceCraft] Saving partial audio because keep_partial_on_cancel is True...")
+            partial_audio = join_audio_chunks(chunks_in_memory, sr, pause_ms=int(pause_between_chunks_ms), crossfade_ms=int(crossfade_ms))
+            partial_file = OUTPUTS_DIR / f"{gen_id}_partial.wav"
+            sf.write(str(partial_file), partial_audio, sr, subtype="PCM_16")
+            yield "", str(partial_file), str(partial_file), f"⚠️ Cancelled: Partial audio saved to `outputs/{partial_file.name}`"
+        else:
+            print("[VoiceCraft] Generation stopped: Discarding in-memory chunks (zero files written to disk).")
+            yield "", None, None, "🛑 Generation stopped cleanly. Memory freed."
         raise
     except Exception as e:
         print(f"[VoiceCraft] Error during speech synthesis: {e}")
+        yield "", None, None, f"❌ Speech synthesis error: {str(e)}"
         raise gr.Error(f"Speech synthesis error: {str(e)}")
+    finally:
+        # Free memory and clean tensors
+        del chunks_in_memory
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
-def generate_batch_speech(
+def generate_speech(
+    text: str,
+    language_code: str,
+    audio_input_path: str | None = None,
+    exaggeration: float = 0.5,
+    cfg_weight: float = 0.5,
+    temperature: float = 0.8,
+    stream_playback: bool = False,
+    pause_between_chunks_ms: int = 200,
+    crossfade_ms: int = 30,
+    keep_partial_on_cancel: bool = False,
+    progress=None,
+):
+    """
+    Synchronous wrapper for callers (such as telegram_bot.py or benchmark.py).
+    Iterates through the stream generator and returns the final continuous result:
+    (output_filepath, output_filepath, info_badge).
+    """
+    final_result = (None, None, "No output generated.")
+    for res in generate_speech_stream(
+        text=text,
+        language_code=language_code,
+        audio_input_path=audio_input_path,
+        exaggeration=exaggeration,
+        cfg_weight=cfg_weight,
+        temperature=temperature,
+        stream_playback=stream_playback,
+        pause_between_chunks_ms=pause_between_chunks_ms,
+        crossfade_ms=crossfade_ms,
+        keep_partial_on_cancel=keep_partial_on_cancel,
+        progress=progress,
+    ):
+        # res is: (stream_html, audio_file, download_file, info_badge)
+        if res[1] is not None:
+            final_result = (res[1], res[2], res[3])
+    return final_result
+
+
+def generate_batch_speech_stream(
     batch_text: str,
     language_code: str,
     audio_input_path: str | None,
     exaggeration: float = 0.5,
     cfg_weight: float = 0.5,
     temperature: float = 0.8,
+    stream_playback: bool = True,
+    pause_between_chunks_ms: int = 200,
+    crossfade_ms: int = 30,
     progress=gr.Progress(track_tqdm=True),
 ):
     """
-    Generates multiple audio clips from text lines submitted together.
-    Returns list of files and a downloadable zip archive.
+    Batch generation: Each submitted line is synthesized, chunks are kept in memory,
+    and exactly ONE final .wav per clip is saved to outputs/.
+    Returns final file list and a downloadable zip archive containing ONLY the final clips.
     """
     lines = [line.strip() for line in batch_text.split("\n") if line.strip()]
     if not lines:
         raise gr.Error("Please enter at least one line of text to synthesize.")
 
-    generated_files = []
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    generated_final_files = []
+    batch_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
     for i, line in enumerate(lines):
         if progress:
             progress(i / len(lines), desc=f"Processing clip {i+1}/{len(lines)}: '{line[:30]}...'")
-        audio_path, _, _ = generate_speech(
+
+        # Synthesize clip using generator in memory
+        clip_file = None
+        for res in generate_speech_stream(
             text=line,
             language_code=language_code,
             audio_input_path=audio_input_path,
             exaggeration=exaggeration,
             cfg_weight=cfg_weight,
             temperature=temperature,
+            stream_playback=stream_playback,
+            pause_between_chunks_ms=pause_between_chunks_ms,
+            crossfade_ms=crossfade_ms,
+            keep_partial_on_cancel=False,
             progress=None,
-        )
-        generated_files.append(audio_path)
+        ):
+            if res[1] is not None:
+                clip_file = res[1]
 
-    # Create zip archive of all generated clips
-    zip_path = OUTPUTS_DIR / f"voicecraft_batch_{timestamp}.zip"
+        if clip_file and os.path.exists(clip_file):
+            generated_final_files.append(clip_file)
+
+        status_txt = f"⚡ Batch Progress: Completed **{len(generated_final_files)} of {len(lines)} clips**."
+        yield generated_final_files, None, status_txt
+
+    # Create zip containing ONLY the final saved clips
+    zip_path = OUTPUTS_DIR / f"{batch_timestamp}_batch.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for f in generated_files:
+        for f in generated_final_files:
             zf.write(f, arcname=Path(f).name)
 
-    summary_text = f"✅ Batch Complete: Generated **{len(generated_files)} audio clips** successfully!"
-    return generated_files, str(zip_path), summary_text
+    summary_text = f"✅ Batch Complete: Generated **{len(generated_final_files)} clips** into `outputs/`!"
+    yield generated_final_files, str(zip_path), summary_text
 
 
 # --- Settings & Telegram Bot Management ---
@@ -331,11 +607,11 @@ def save_env_settings(host: str, port: str, token: str, default_lang: str):
 
 
 def get_telegram_bot_status() -> str:
-    """Returns the current runtime status of the Telegram bot background process."""
+    """Returns runtime status of the Telegram bot background process."""
     global BOT_PROCESS
     if BOT_PROCESS is not None and BOT_PROCESS.poll() is None:
         return "🟢 **Status: RUNNING** (Listening for Telegram messages)"
-    
+
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not token or token == "your_telegram_bot_token_here":
         return "⚠️ **Status: STOPPED** (Telegram Bot Token is missing or not configured)"
@@ -418,7 +694,7 @@ env_def_lang = os.getenv("TELEGRAM_DEFAULT_LANG", "en")
 custom_css = """
 .main-header {
     text-align: center;
-    margin-bottom: 1.5rem;
+    margin-bottom: 1.2rem;
 }
 .main-header h1 {
     font-size: 2.2rem;
@@ -426,21 +702,10 @@ custom_css = """
     background: linear-gradient(135deg, #4f46e5 0%, #06b6d4 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
-    margin-bottom: 0.3rem;
+    margin-bottom: 0.2rem;
 }
-.sub-header {
-    color: #64748b;
-    font-size: 1.05rem;
-}
-.card {
-    border-radius: 12px;
-    padding: 1rem;
-    background-color: var(--background-fill-secondary);
-    border: 1px solid var(--border-color-primary);
-}
-.badge-ready {
-    color: #10b981;
-    font-weight: 600;
+.vc-stream-box {
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
 }
 """
 
@@ -449,7 +714,7 @@ with gr.Blocks(title="VoiceCraft - Multilingual Voice Cloning Studio") as demo:
         gr.Markdown(
             """
             # 🎙️ VoiceCraft
-            ### Multilingual Voice Cloning Studio & Telegram Bot
+            ### Multilingual Voice Cloning Studio & Live Stream Audio
             """
         )
 
@@ -473,7 +738,7 @@ with gr.Blocks(title="VoiceCraft - Multilingual Voice Cloning Studio") as demo:
 
                     gr.Markdown("### 2. Text to Speak")
                     with gr.Tabs():
-                        with gr.TabItem("Single Sentence / Text"):
+                        with gr.TabItem("Single Text (Streaming)"):
                             text_input = gr.Textbox(
                                 lines=4,
                                 label="Text to synthesize",
@@ -487,30 +752,57 @@ with gr.Blocks(title="VoiceCraft - Multilingual Voice Cloning Studio") as demo:
                                 info="Default: English. Supports Hindi (hi) and 21 other languages.",
                             )
 
-                            with gr.Accordion("⚙️ Advanced Audio Controls", open=False):
+                            with gr.Accordion("⚙️ Advanced Audio & Streaming Controls", open=False):
                                 exaggeration_slider = gr.Slider(
                                     minimum=0.25,
                                     maximum=2.0,
-                                    value=0.5,
+                                    value=APP_CONFIG["generation"]["exaggeration"],
                                     step=0.05,
                                     label="Exaggeration (0.5 is neutral natural voice)",
                                 )
                                 cfg_slider = gr.Slider(
                                     minimum=0.0,
                                     maximum=1.0,
-                                    value=0.5,
+                                    value=APP_CONFIG["generation"]["cfg_weight"],
                                     step=0.05,
-                                    label="CFG Weight (0.5 standard; 0.0 is 2x faster and great for cross-lingual)",
+                                    label="CFG Weight (0.5 standard; 0.0 is 2x faster and good for cross-lingual)",
                                 )
                                 temp_slider = gr.Slider(
                                     minimum=0.05,
                                     maximum=2.0,
-                                    value=0.8,
+                                    value=APP_CONFIG["generation"]["temperature"],
                                     step=0.05,
                                     label="Temperature (Variation & randomness)",
                                 )
+                                stream_playback_chk = gr.Checkbox(
+                                    value=APP_CONFIG["audio"]["stream_playback"],
+                                    label="Stream Playback (Plays chunks in-memory immediately as generated)",
+                                )
+                                pause_ms_slider = gr.Slider(
+                                    minimum=0,
+                                    maximum=600,
+                                    value=APP_CONFIG["audio"]["pause_between_chunks_ms"],
+                                    step=25,
+                                    label="Inter-sentence Pause (ms)",
+                                    info="Natural silence added between sentence chunks in the final continuous file.",
+                                )
+                                crossfade_ms_slider = gr.Slider(
+                                    minimum=0,
+                                    maximum=100,
+                                    value=APP_CONFIG["audio"]["crossfade_ms"],
+                                    step=5,
+                                    label="Crossfade Window (ms)",
+                                    info="Boundary transition smoothing to eliminate pops and clicks.",
+                                )
+                                keep_partial_chk = gr.Checkbox(
+                                    value=APP_CONFIG["audio"]["keep_partial_on_cancel"],
+                                    label="Keep Partial Audio on Cancel",
+                                    info="If checked, saves partial stitched audio when generation is stopped halfway.",
+                                )
 
-                            generate_btn = gr.Button("🔊 Generate Speech", variant="primary", size="lg")
+                            with gr.Row():
+                                generate_btn = gr.Button("🔊 Generate Speech", variant="primary", scale=3, size="lg")
+                                stop_btn = gr.Button("🛑 Stop", variant="stop", scale=1, size="lg")
 
                         with gr.TabItem("Batch Generation (Multiple Clips)"):
                             batch_text_input = gr.Textbox(
@@ -524,24 +816,29 @@ with gr.Blocks(title="VoiceCraft - Multilingual Voice Cloning Studio") as demo:
                                 value="en",
                                 label="Batch Language",
                             )
-                            generate_batch_btn = gr.Button("⚡ Generate All Clips", variant="primary", size="lg")
+                            with gr.Row():
+                                generate_batch_btn = gr.Button("⚡ Generate All Clips", variant="primary", scale=3, size="lg")
+                                stop_batch_btn = gr.Button("🛑 Stop Batch", variant="stop", scale=1, size="lg")
 
                 # Right Column: Audio Outputs
                 with gr.Column(scale=1):
-                    gr.Markdown("### 3. Generated Audio Output")
-                    audio_info = gr.Markdown(value="*Audio player will update when generation finishes.*")
+                    gr.Markdown("### 3. Audio Output")
+                    # Live in-memory streaming player
+                    stream_player_box = gr.HTML(value="")
+
+                    audio_info = gr.Markdown(value="*Status and file details will appear here.*")
                     audio_output = gr.Audio(
-                        label="Audio Player",
+                        label="Final Master Audio Player (Single Continuous File)",
                         type="filepath",
                         interactive=False,
                     )
                     download_output = gr.File(
-                        label="Download Master WAV",
+                        label="Download Final WAV (.wav)",
                         interactive=False,
                     )
 
                     gr.Markdown("### Batch Outputs")
-                    batch_status_md = gr.Markdown(value="*Submit lines in Batch tab to generate multiple clips at once.*")
+                    batch_status_md = gr.Markdown(value="*Batch files will be listed below when generated.*")
                     batch_gallery = gr.Files(label="Generated Batch Clips", interactive=False)
                     batch_zip_output = gr.File(label="Download All Clips (.zip)", interactive=False)
 
@@ -552,8 +849,9 @@ with gr.Blocks(title="VoiceCraft - Multilingual Voice Cloning Studio") as demo:
                 outputs=[voice_input, voice_status],
             )
 
-            generate_btn.click(
-                fn=generate_speech,
+            # Wire up streaming generation with cancellable stop button
+            gen_event = generate_btn.click(
+                fn=generate_speech_stream,
                 inputs=[
                     text_input,
                     language_dropdown,
@@ -561,12 +859,22 @@ with gr.Blocks(title="VoiceCraft - Multilingual Voice Cloning Studio") as demo:
                     exaggeration_slider,
                     cfg_slider,
                     temp_slider,
+                    stream_playback_chk,
+                    pause_ms_slider,
+                    crossfade_ms_slider,
+                    keep_partial_chk,
                 ],
-                outputs=[audio_output, download_output, audio_info],
+                outputs=[stream_player_box, audio_output, download_output, audio_info],
             )
 
-            generate_batch_btn.click(
-                fn=generate_batch_speech,
+            stop_btn.click(
+                fn=None,
+                cancels=[gen_event],
+            )
+
+            # Wire up batch streaming generation with cancellable stop button
+            batch_gen_event = generate_batch_btn.click(
+                fn=generate_batch_speech_stream,
                 inputs=[
                     batch_text_input,
                     batch_language_dropdown,
@@ -574,8 +882,16 @@ with gr.Blocks(title="VoiceCraft - Multilingual Voice Cloning Studio") as demo:
                     exaggeration_slider,
                     cfg_slider,
                     temp_slider,
+                    stream_playback_chk,
+                    pause_ms_slider,
+                    crossfade_ms_slider,
                 ],
                 outputs=[batch_gallery, batch_zip_output, batch_status_md],
+            )
+
+            stop_batch_btn.click(
+                fn=None,
+                cancels=[batch_gen_event],
             )
 
         # ==========================================

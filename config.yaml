@@ -1,0 +1,18 @@
+# VoiceCraft Audio & Performance Configuration
+audio:
+  stream_playback: true
+  pause_between_chunks_ms: 200
+  crossfade_ms: 30
+  keep_partial_on_cancel: false
+  max_chunk_chars: 250
+  target_sample_rate: 24000
+
+generation:
+  default_language: en
+  exaggeration: 0.5
+  cfg_weight: 0.5
+  temperature: 0.8
+
+server:
+  host: 127.0.0.1
+  port: 7860

@@ -280,7 +280,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "🎙 *VoiceCraft Multilingual Bot*\n\n"
-        "1️⃣ *Send a voice message* – I'll ask: _\"Whose voice is this?\"_ and save it under that name (e.g. Tamanna, Ayushi).\n"
+        "1️⃣ *Send a voice message* – I'll ask: _\"Whose voice is this?\"_ and save it under your chosen name.\n"
         "2️⃣ *Send any text* – I'll show buttons for your saved voices. Tap one to speak your text!\n\n"
         "Commands:\n"
         "• `/voices` – List all your saved voices\n"
@@ -334,7 +334,7 @@ async def on_audio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await status.edit_text(
         f"🎙 *Whose voice is this?*\n\n"
-        f"Reply with a name for this voice (example: *Tamanna*, *Ayushi*):\n\n"
+        f"Reply with the name for this voice:\n\n"
         f"📝 _I heard: {ref_text[:120]}_",
         parse_mode="Markdown",
     )
@@ -356,7 +356,7 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         voice_name = re.sub(r"\s+", " ", voice_name)[:30]
         if not voice_name:
             ctx.user_data["pending_voice"] = pending
-            await update.message.reply_text("❌ Please enter a valid name (example: Tamanna, Ayushi):")
+            await update.message.reply_text("❌ Please enter a name for this voice:")
             return
 
         target_dir = d / voice_name
@@ -383,19 +383,12 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # 2. User is sending text to synthesize!
     voices = get_user_voices(uid)
     if not voices:
-        # Check if voices/my_voice.wav exists in repo as fallback
-        shared = BASE_DIR / "voices" / "my_voice.wav"
-        if shared.exists():
-            default_dir = d / "MyVoice"
-            default_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy(shared, default_dir / "ref.wav")
-            (default_dir / "ref.txt").write_text("Studio Voice", encoding="utf-8")
-            voices = ["MyVoice"]
-        else:
-            await update.message.reply_text(
-                "🎤 You have no saved voices yet! First send me a voice message to save one."
-            )
-            return
+        await update.message.reply_text(
+            "🎤 You don't have any saved voices yet!\n\n"
+            "Send me a voice message first, and I will ask you for a name to save it.",
+            parse_mode="Markdown",
+        )
+        return
 
     if len(text) > MAX_TEXT_CHARS:
         await update.message.reply_text(
@@ -563,7 +556,7 @@ async def delete_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if not ctx.args:
         await update.message.reply_text(
-            "⚠️ Please specify which voice to delete.\nExample: `/delete Tamanna`",
+            "⚠️ Please specify which voice to delete.\nUsage: `/delete <name>`",
             parse_mode="Markdown",
         )
         return

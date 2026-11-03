@@ -74,6 +74,7 @@ CANCEL_REQUESTED = False
 # --- Helper Data Models ---
 class GenerateRequest(BaseModel):
     text: str
+    voice_path: str | None = None
     language: str = "en"
     exaggeration: float = 0.5
     cfg_weight: float = 0.5
@@ -243,7 +244,8 @@ async def generate_speech_endpoint(req: GenerateRequest):
 
     if not req.text or not req.text.strip():
         raise HTTPException(status_code=400, detail="Please enter text to synthesize.")
-    if not MY_VOICE_PATH.exists():
+    ref_voice = Path(req.voice_path) if req.voice_path and Path(req.voice_path).exists() else MY_VOICE_PATH
+    if not ref_voice.exists():
         raise HTTPException(status_code=400, detail="Please save your voice sample first.")
 
     gen_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -269,7 +271,7 @@ async def generate_speech_endpoint(req: GenerateRequest):
 
             model = get_or_load_model()
             sr = model.sr
-            model.prepare_conditionals(str(MY_VOICE_PATH), exaggeration=float(req.exaggeration))
+            model.prepare_conditionals(str(ref_voice), exaggeration=float(req.exaggeration))
 
             with torch.inference_mode():
                 for idx, chunk_text in enumerate(chunks):

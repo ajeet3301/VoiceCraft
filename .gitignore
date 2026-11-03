@@ -40,6 +40,8 @@ voices/*
 !voices/.gitkeep
 outputs/*
 !outputs/.gitkeep
+bot_data/*
+!bot_data/.gitkeep
 cache/
 benchmarks/*.wav
 benchmarks/*.json

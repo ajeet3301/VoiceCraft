@@ -1,18 +1,23 @@
-.vscode
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
 
-# Pylance
-pyrightconfig.json
+# Environment Variables & Secrets (Keep Safe!)
+.env
+.env.local
+.env.*.local
+!.env.example
 
-# Byte-compiled / optimized / DLL files
+# Python Cache
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
-
-# Distribution / packaging
 .Python
+
+# Distribution / Build
 build/
 develop-eggs/
 dist/
@@ -30,19 +35,29 @@ wheels/
 *.egg
 MANIFEST
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
+# User Personal Audio & Generated Data
+voices/*
+!voices/.gitkeep
+outputs/*
+!outputs/.gitkeep
+cache/
+benchmarks/*.wav
+benchmarks/*.json
+!benchmarks/.gitkeep
+*.flac
+*.bak
 
-# Installer logs
+# Temporary / Local Testing
+test_out.wav
+test_flow.py
 pip-log.txt
 pip-delete-this-directory.txt
-
 syn_out/
 checkpoints/
 .gradio
 
-# Ignore generated sample .wav files
-**/*.wav
+# IDE / Editor Configs
+.vscode/
+.idea/
+*.swp
+pyrightconfig.json

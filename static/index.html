@@ -1,540 +1,147 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VoiceCraft — Modern Voice Cloning Studio</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <title>Voice Studio</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <!-- Top Navigation Header -->
-  <header class="navbar">
-    <div class="nav-container">
-      <div class="brand">
-        <div class="brand-icon">🎙️</div>
-        <div class="brand-text">
-          <h1>VoiceCraft</h1>
-          <span class="brand-sub">Multilingual Voice Studio</span>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-content">
+        <div>
+          <h1 class="title">Voice Studio</h1>
+          <p class="subtitle">Save a voice, then write what it should say.</p>
         </div>
+        <button id="theme-toggle" class="theme-btn" type="button" aria-label="Toggle theme">Theme</button>
       </div>
+    </header>
 
-      <div class="header-badges">
-        <div class="status-badge" id="system-status-badge">
-          <span class="status-dot green" id="status-dot"></span>
-          <span id="status-text">Model Ready</span>
+    <!-- Main Content -->
+    <main>
+      <!-- Voices Section -->
+      <section class="section">
+        <div class="section-header">
+          <h2 class="section-title">Voices</h2>
+          <button id="add-voice-toggle-btn" class="text-link" type="button">Add a voice</button>
         </div>
-        <div class="device-badge" id="device-badge" title="Active Hardware Backend">
-          <span id="device-name">CPU</span>
-        </div>
-      </div>
 
-      <div class="header-actions">
-        <button class="icon-btn" id="tips-btn" title="Voice Recording Tips" aria-label="Tips">
-          💡 <span class="btn-label">Tips</span>
+        <!-- Add Voice Panel -->
+        <div id="add-voice-panel" class="panel" style="display: none;">
+          <div class="form-group">
+            <label class="label" for="voice-name-input">Voice name</label>
+            <input type="text" id="voice-name-input" class="input" placeholder="e.g. Tamanna, Ayushi" maxlength="30">
+          </div>
+
+          <div class="form-group">
+            <label class="label">Audio sample</label>
+            <div id="voice-drop-area" class="drop-area">
+              <input type="file" id="voice-file-input" accept="audio/*" style="display: none;">
+              <span id="drop-text">Click to choose an audio file (5 to 20 seconds works best)</span>
+            </div>
+            <div class="record-row">
+              <button id="mic-record-btn" class="btn btn-secondary" type="button">Record from microphone</button>
+              <span id="record-status" class="quiet-text"></span>
+            </div>
+          </div>
+
+          <div id="add-voice-status" class="status-msg"></div>
+
+          <div class="btn-row">
+            <button id="save-new-voice-btn" class="btn btn-primary" type="button">Save voice</button>
+            <button id="cancel-add-voice-btn" class="btn btn-secondary" type="button">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Saved Voices List -->
+        <div id="voices-list" class="voices-list">
+          <div class="quiet-text">Loading voices...</div>
+        </div>
+      </section>
+
+      <!-- Text Section -->
+      <section class="section">
+        <div class="section-header">
+          <label class="section-title" for="text-input">Text</label>
+          <span id="char-count" class="quiet-text">0 characters</span>
+        </div>
+
+        <textarea
+          id="text-input"
+          class="textarea"
+          placeholder="Write or paste what you would like spoken..."
+          rows="5"
+        ></textarea>
+
+        <div class="meta-row">
+          <span id="detected-lang" class="quiet-text">Detected: Hindi (Devanagari)</span>
+          <span class="quiet-text hint-text">Supports Hindi, Hinglish, and English</span>
+        </div>
+      </section>
+
+      <!-- Style Section -->
+      <section class="section">
+        <label class="section-title">Style</label>
+        <div class="pills-row" id="style-pills">
+          <button class="pill active" data-style="natural" type="button">Natural</button>
+          <button class="pill" data-style="happy" type="button">Happy</button>
+          <button class="pill" data-style="soft" type="button">Soft</button>
+          <button class="pill" data-style="husky" type="button">Husky</button>
+          <button class="pill" data-style="whisper" type="button">Whisper</button>
+        </div>
+      </section>
+
+      <!-- Action & Progress Section -->
+      <section class="section action-section">
+        <button id="generate-btn" class="btn btn-primary btn-full" type="button" disabled>
+          Generate
         </button>
-        <button class="icon-btn" id="theme-toggle" title="Toggle Theme" aria-label="Toggle Light/Dark Theme">
-          <span id="theme-icon">🌙</span>
-        </button>
-      </div>
-    </div>
-  </header>
 
-  <!-- Main Container -->
-  <main class="main-content">
-    <!-- Tab Navigation -->
-    <nav class="tab-nav" role="tablist">
-      <button class="tab-btn active" data-tab="tab-studio" role="tab" aria-selected="true">
-        <span>🎙️</span> Studio
-      </button>
-      <button class="tab-btn" data-tab="tab-batch" role="tab" aria-selected="false">
-        <span>📦</span> Batch Clips
-      </button>
-      <button class="tab-btn" data-tab="tab-history" role="tab" aria-selected="false">
-        <span>📜</span> History (<span id="history-count">0</span>)
-      </button>
-      <button class="tab-btn" data-tab="tab-settings" role="tab" aria-selected="false">
-        <span>⚙️</span> Settings & Bot
-      </button>
-    </nav>
-
-    <!-- ========================================== -->
-    <!-- TAB 1: STUDIO (SINGLE GENERATION)          -->
-    <!-- ========================================== -->
-    <section class="tab-pane active" id="tab-studio" role="tabpanel">
-      <div class="studio-grid">
-        <!-- Left Column: Controls & Text Input -->
-        <div class="control-col">
-          <!-- Card 1: Your Voice -->
-          <div class="card voice-card">
-            <div class="card-header">
-              <div class="card-title-group">
-                <span class="step-num">1</span>
-                <div>
-                  <h2>Your Voice</h2>
-                  <p class="card-desc">Upload or record a 10–20s voice sample once</p>
-                </div>
-              </div>
-              <div class="voice-status-pill" id="voice-pill">
-                <span class="status-dot gray" id="voice-dot"></span>
-                <span id="voice-pill-text">Checking voice...</span>
-              </div>
-            </div>
-
-            <!-- Dropzone / Record Zone -->
-            <div class="dropzone" id="voice-dropzone">
-              <input type="file" id="voice-file-input" accept="audio/*,.m4a,.wav,.mp3,.flac,.ogg" style="display:none;">
-              <div class="dropzone-content" id="dropzone-prompt">
-                <div class="dropzone-icon">📁</div>
-                <p><strong>Click to upload</strong> or drag & drop audio here</p>
-                <span class="dropzone-sub">WAV, M4A, MP3, or FLAC (ideal: 10–20 sec)</span>
-              </div>
-
-              <!-- Live Audio Preview inside Card -->
-              <div class="audio-preview-box" id="audio-preview-box" style="display:none;">
-                <div class="preview-info">
-                  <span id="preview-filename">sample.wav</span>
-                  <span class="duration-badge" id="preview-duration">0.0s</span>
-                </div>
-                <audio id="voice-preview-audio" controls style="width:100%; height:36px;"></audio>
-                <div class="duration-warning" id="duration-warning" style="display:none;"></div>
-              </div>
-            </div>
-
-            <!-- Voice Controls: Record & Save -->
-            <div class="voice-action-bar">
-              <button class="btn btn-secondary" id="mic-record-btn">
-                <span id="mic-icon">🎙️</span> <span id="mic-label">Record Voice</span>
-              </button>
-              <button class="btn btn-primary" id="save-voice-btn" disabled>
-                💾 Save My Voice
-              </button>
-            </div>
+        <!-- Progress Block -->
+        <div id="progress-container" class="progress-container" style="display: none;">
+          <div class="progress-bar-track">
+            <div id="progress-bar-fill" class="progress-bar-fill"></div>
           </div>
-
-          <!-- Card 2: Write Your Text -->
-          <div class="card text-card">
-            <div class="card-header">
-              <div class="card-title-group">
-                <span class="step-num">2</span>
-                <div>
-                  <h2>Write Your Text</h2>
-                  <p class="card-desc">Type text to synthesize in your cloned voice</p>
-                </div>
-              </div>
-              <div class="text-meta">
-                <span id="word-count">0 words</span> • <span id="char-count">0 characters</span>
-              </div>
-            </div>
-
-            <!-- Textarea with Live Counter -->
-            <div class="textarea-wrapper">
-              <textarea id="text-input" rows="5" placeholder="Type or paste text you want your voice to speak... (Press Ctrl+Enter to generate)"></textarea>
-            </div>
-
-            <!-- Language and Style Selector Row -->
-            <div class="options-row">
-              <div class="form-group flex-1">
-                <label for="language-select">Target Language</label>
-                <select id="language-select" class="form-select"></select>
-              </div>
-
-              <div class="form-group flex-1">
-                <label for="preset-select">Voice Style Preset</label>
-                <select id="preset-select" class="form-select">
-                  <option value="natural">🌿 Natural (Balanced)</option>
-                  <option value="expressive">🎭 Expressive (Dynamic)</option>
-                  <option value="calm">🧘 Calm (Relaxed)</option>
-                  <option value="fast">⚡ Fast (2x CPU Speed)</option>
-                  <option value="custom">⚙️ Custom</option>
-                </select>
-              </div>
-            </div>
-
-            <!-- Collapsible Advanced Settings -->
-            <details class="advanced-accordion" id="advanced-accordion">
-              <summary>
-                <span>⚙️ Advanced Speech & Streaming Controls</span>
-                <span class="accordion-arrow">▾</span>
-              </summary>
-              <div class="advanced-body">
-                <div class="slider-grid">
-                  <!-- Exaggeration -->
-                  <div class="slider-item">
-                    <div class="slider-label-row">
-                      <label for="exaggeration-slider" title="Expressiveness and pitch modulation">Exaggeration</label>
-                      <span class="slider-val" id="exaggeration-val">0.50</span>
-                    </div>
-                    <input type="range" id="exaggeration-slider" min="0.25" max="2.0" step="0.05" value="0.50">
-                    <span class="slider-tip">0.5 is neutral expressiveness. Higher is more theatrical.</span>
-                  </div>
-
-                  <!-- CFG Weight -->
-                  <div class="slider-item">
-                    <div class="slider-label-row">
-                      <label for="cfg-slider" title="Guidance scale. 0 is 2x faster on CPU">CFG Guidance</label>
-                      <span class="slider-val" id="cfg-val">0.50</span>
-                    </div>
-                    <input type="range" id="cfg-slider" min="0.0" max="1.0" step="0.05" value="0.50">
-                    <span class="slider-tip">0.5 is standard. 0.0 halves compute time on CPU!</span>
-                  </div>
-
-                  <!-- Temperature -->
-                  <div class="slider-item">
-                    <div class="slider-label-row">
-                      <label for="temp-slider" title="Randomness and creative cadence">Temperature</label>
-                      <span class="slider-val" id="temp-val">0.80</span>
-                    </div>
-                    <input type="range" id="temp-slider" min="0.05" max="2.0" step="0.05" value="0.80">
-                    <span class="slider-tip">0.8 is natural. Lower is more deterministic.</span>
-                  </div>
-
-                  <!-- Seed -->
-                  <div class="slider-item">
-                    <div class="slider-label-row">
-                      <label for="seed-input">Random Seed</label>
-                      <button class="tiny-btn" id="randomize-seed-btn">🎲 Randomize</button>
-                    </div>
-                    <input type="number" id="seed-input" class="form-input" placeholder="Random (-1)">
-                    <span class="slider-tip">Keep fixed for 100% reproducible cadence.</span>
-                  </div>
-
-                  <!-- Pause Between Sentences -->
-                  <div class="slider-item">
-                    <div class="slider-label-row">
-                      <label for="pause-slider">Sentence Pause (ms)</label>
-                      <span class="slider-val" id="pause-val">200 ms</span>
-                    </div>
-                    <input type="range" id="pause-slider" min="0" max="600" step="25" value="200">
-                    <span class="slider-tip">Natural silence added between sentence clauses.</span>
-                  </div>
-
-                  <!-- Crossfade Window -->
-                  <div class="slider-item">
-                    <div class="slider-label-row">
-                      <label for="crossfade-slider">Crossfade Smoothing (ms)</label>
-                      <span class="slider-val" id="crossfade-val">30 ms</span>
-                    </div>
-                    <input type="range" id="crossfade-slider" min="0" max="100" step="5" value="30">
-                    <span class="slider-tip">Prevents DC-offset clicks at sentence boundaries.</span>
-                  </div>
-                </div>
-
-                <!-- Toggles & Preset Actions -->
-                <div class="toggle-row">
-                  <label class="toggle-control">
-                    <input type="checkbox" id="stream-chk" checked>
-                    <span class="toggle-track"></span>
-                    <span class="toggle-text">Live In-Memory Streaming Playback</span>
-                  </label>
-
-                  <label class="toggle-control">
-                    <input type="checkbox" id="keep-partial-chk">
-                    <span class="toggle-track"></span>
-                    <span class="toggle-text">Keep Partial Audio on Cancel</span>
-                  </label>
-                </div>
-
-                <div class="advanced-actions">
-                  <button class="btn btn-secondary btn-sm" id="reset-defaults-btn">↺ Reset to Defaults</button>
-                  <button class="btn btn-secondary btn-sm" id="save-custom-preset-btn">💾 Save Custom Preset</button>
-                </div>
-              </div>
-            </details>
-
-            <!-- Generate Action Row -->
-            <div class="generate-action-bar">
-              <button class="btn btn-primary btn-lg" id="generate-btn">
-                <span class="btn-icon">🔊</span>
-                <span>Generate Speech</span>
-                <span class="key-hint">Ctrl+Enter</span>
-              </button>
-              <button class="btn btn-danger btn-lg" id="stop-btn" style="display:none;">
-                <span class="btn-icon">🛑</span> Stop
-              </button>
-            </div>
+          <div class="progress-meta">
+            <span id="progress-status-text" class="quiet-text">Generating. 0%. About 8s remaining.</span>
+            <button id="stop-generation-btn" class="text-link danger-link" type="button">Stop</button>
           </div>
         </div>
 
-        <!-- Right Column: Live Stream & Master Output -->
-        <div class="output-col">
-          <div class="card output-card">
-            <div class="card-header">
-              <h2>Generated Speech</h2>
-              <span class="badge" id="output-badge">Waiting</span>
-            </div>
+        <div id="status-notification" class="status-msg"></div>
+      </section>
 
-            <!-- Empty / Idle State -->
-            <div class="output-idle-state" id="output-idle">
-              <div class="idle-icon">🎧</div>
-              <h3>Ready to Synthesize</h3>
-              <p>Type text and click <strong>Generate Speech</strong>. Audio chunks will stream in memory, and the final continuous master audio will appear here.</p>
-            </div>
-
-            <!-- Live Streaming Progress & Active Sentence Highlighting -->
-            <div class="live-stream-area" id="live-stream-area" style="display:none;">
-              <div class="stream-progress-card">
-                <div class="stream-header-row">
-                  <div class="stream-title">
-                    <span class="stream-pulse"></span>
-                    <strong id="stream-status-title">Generating audio...</strong>
-                  </div>
-                  <span class="stream-timer" id="stream-timer">0.0s elapsed</span>
-                </div>
-
-                <div class="progress-bar-container">
-                  <div class="progress-bar-fill" id="progress-bar" style="width:0%;"></div>
-                </div>
-
-                <p class="stream-sub" id="stream-sub">Chunk 1 of 4 in memory</p>
-              </div>
-
-              <!-- Active Spoken Sentence Highlight Card -->
-              <div class="active-sentence-card" id="active-sentence-card">
-                <div class="sentence-header">
-                  <span>🗣️ Speaking sentence <span id="active-sentence-idx">1</span>:</span>
-                </div>
-                <div class="active-sentence-text" id="active-sentence-text">
-                  "..."
-                </div>
-              </div>
-
-              <!-- Live In-Memory HTML5 Audio Player -->
-              <div class="live-player-box">
-                <audio id="live-audio-player" controls autoplay style="width:100%; height:38px;"></audio>
-                <span class="live-player-tag">⚡ Live In-Memory Audio Queue (0 disk writes)</span>
-              </div>
-            </div>
-
-            <!-- Master Finished Output State -->
-            <div class="final-output-area" id="final-output-area" style="display:none;">
-              <div class="final-audio-card">
-                <div class="final-meta-row">
-                  <div class="final-name" id="final-filename">20261103_193000.wav</div>
-                  <div class="final-tags">
-                    <span class="badge badge-success" id="final-duration">14.2s</span>
-                    <span class="badge" id="final-gen-time">Gen: 8.5s</span>
-                  </div>
-                </div>
-
-                <!-- Master Audio Player -->
-                <audio id="master-audio-player" controls style="width:100%; height:44px; margin-top:8px;"></audio>
-
-                <!-- Action Button Group -->
-                <div class="final-action-row">
-                  <a class="btn btn-primary" id="download-wav-btn" download="voicecraft.wav" href="#">
-                    ⬇️ Download WAV
-                  </a>
-                  <button class="btn btn-secondary" id="open-folder-btn">
-                    📁 Open Folder
-                  </button>
-                  <button class="btn btn-secondary" id="regenerate-btn">
-                    🔄 Regenerate
-                  </button>
-                </div>
-              </div>
-            </div>
-
+      <!-- Result Section -->
+      <section id="result-section" class="section result-section" style="display: none;">
+        <h2 class="section-title">Result</h2>
+        <div class="result-card">
+          <audio id="result-audio-player" class="audio-player" controls preload="metadata"></audio>
+          <div class="result-actions">
+            <a id="download-result-link" class="text-link" href="#" download="voice.wav">Download</a>
+            <button id="regenerate-btn" class="text-link" type="button">Regenerate</button>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- ========================================== -->
-    <!-- TAB 2: BATCH CLIPS                         -->
-    <!-- ========================================== -->
-    <section class="tab-pane" id="tab-batch" role="tabpanel">
-      <div class="batch-layout">
-        <div class="batch-header-card card">
-          <div class="card-header">
-            <div>
-              <h2>Batch Speech Synthesis</h2>
-              <p class="card-desc">Add multiple sentences or paragraphs. Each clip is generated in memory and saved as one final file.</p>
-            </div>
-            <div class="batch-actions">
-              <button class="btn btn-secondary" id="batch-add-btn">➕ Add Clip</button>
-              <button class="btn btn-secondary" id="batch-paste-lines-btn">📋 Paste Multiple Lines</button>
-            </div>
-          </div>
-
-          <div class="batch-options-row">
-            <div class="form-group">
-              <label for="batch-lang-select">Language</label>
-              <select id="batch-lang-select" class="form-select"></select>
-            </div>
-            <div class="batch-stats">
-              Total clips: <strong id="batch-total-count">3</strong>
-            </div>
-          </div>
+      <!-- History Section -->
+      <section class="section history-section">
+        <div class="section-header">
+          <h2 class="section-title">Recent Generations</h2>
+          <button id="refresh-history-btn" class="text-link" type="button">Refresh</button>
         </div>
-
-        <!-- Dynamic Clip List -->
-        <div class="batch-list" id="batch-items-container"></div>
-
-        <!-- Batch Action Bar -->
-        <div class="batch-bottom-bar">
-          <button class="btn btn-primary btn-lg" id="batch-generate-btn">
-            ⚡ Generate All Clips
-          </button>
-          <button class="btn btn-danger btn-lg" id="batch-stop-btn" style="display:none;">
-            🛑 Stop Batch
-          </button>
-          <a class="btn btn-secondary btn-lg" id="batch-download-zip" href="#" style="display:none;" download="batch.zip">
-            📦 Download All (.zip)
-          </a>
+        <div id="history-container" class="history-list">
+          <div class="quiet-text">No previous generations found.</div>
         </div>
-      </div>
-    </section>
+      </section>
+    </main>
 
-    <!-- ========================================== -->
-    <!-- TAB 3: HISTORY                             -->
-    <!-- ========================================== -->
-    <section class="tab-pane" id="tab-history" role="tabpanel">
-      <div class="history-layout">
-        <div class="history-header card">
-          <div class="history-header-row">
-            <div>
-              <h2>Generation History</h2>
-              <p class="card-desc">All completed audio files saved in <code>.\outputs\</code></p>
-            </div>
-            <div class="history-search-row">
-              <input type="text" id="history-search" class="form-input" placeholder="🔍 Search by name or date...">
-              <button class="btn btn-secondary" id="history-open-folder-btn">📁 Open Folder</button>
-              <button class="btn btn-secondary" id="history-refresh-btn">🔄 Refresh</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- History Item List -->
-        <div class="history-list" id="history-list-container">
-          <div class="history-empty">Loading history...</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ========================================== -->
-    <!-- TAB 4: SETTINGS & TELEGRAM BOT             -->
-    <!-- ========================================== -->
-    <section class="tab-pane" id="tab-settings" role="tabpanel">
-      <div class="settings-grid">
-        <!-- Settings Column 1: Local & Private Config -->
-        <div class="card">
-          <div class="card-header">
-            <h2>🛡️ Private Local Settings (.env)</h2>
-          </div>
-          <p class="card-desc" style="margin-bottom:16px;">
-            Stored safely on your computer in <code>.env</code>. This file is ignored by Git and will <strong>never</strong> be uploaded to GitHub.
-          </p>
-
-          <div class="form-group">
-            <label for="cfg-host">Localhost Server IP</label>
-            <input type="text" id="cfg-host" class="form-input" value="127.0.0.1">
-          </div>
-
-          <div class="form-group">
-            <label for="cfg-port">Server Port</label>
-            <input type="text" id="cfg-port" class="form-input" value="7860">
-          </div>
-
-          <div class="form-group">
-            <label for="cfg-token">Telegram Bot Token</label>
-            <div class="password-wrapper">
-              <input type="password" id="cfg-token" class="form-input" placeholder="123456789:ABCdefGHI...">
-              <button type="button" class="eye-toggle-btn" id="token-eye-btn">👁️</button>
-            </div>
-            <span class="slider-tip">Obtained via @BotFather on Telegram. Kept safe and hidden.</span>
-          </div>
-
-          <div class="form-group">
-            <label for="cfg-allowed-ids">Authorized Telegram User IDs</label>
-            <input type="text" id="cfg-allowed-ids" class="form-input" value="8011886933" placeholder="e.g. 8011886933">
-            <span class="slider-tip">Restricts bot access exclusively to your account (comma-separated).</span>
-          </div>
-
-          <div class="form-group">
-            <label for="cfg-max-words">Max Words Per Request</label>
-            <input type="number" id="cfg-max-words" class="form-input" value="60" min="5" max="500">
-            <span class="slider-tip">Maximum word count allowed per text message on Telegram.</span>
-          </div>
-
-          <div class="form-group">
-            <label for="cfg-max-users">Max Allowed Users</label>
-            <input type="number" id="cfg-max-users" class="form-input" value="1" min="0" max="100">
-            <span class="slider-tip">Maximum unique users permitted to use the bot (0 = unlimited).</span>
-          </div>
-
-          <button class="btn btn-primary" id="save-env-btn">💾 Save Settings</button>
-          <div id="save-env-status" class="toast-msg"></div>
-        </div>
-
-        <!-- Settings Column 2: Telegram Bot Controller -->
-        <div class="card">
-          <div class="card-header">
-            <h2>🤖 Telegram Bot Controller</h2>
-          </div>
-          <div class="telegram-status-box" id="tg-status-box">
-            <span class="status-dot green" id="tg-status-dot"></span>
-            <span id="tg-status-text">Checking bot...</span>
-          </div>
-
-          <div class="btn-group" style="margin-top:16px;">
-            <button class="btn btn-primary" id="start-tg-btn">🚀 Start Bot</button>
-            <button class="btn btn-warning" id="restart-tg-btn" style="background:#eab308; color:#000;">🔄 Restart Bot</button>
-            <button class="btn btn-danger" id="stop-tg-btn">🛑 Stop Bot</button>
-            <button class="btn btn-secondary" id="refresh-tg-btn">Status</button>
-          </div>
-
-          <div class="tg-guide-box">
-            <h3>📱 Connect via Telegram</h3>
-            <p>Your bot is live! Open Telegram and talk to it:</p>
-            <a href="https://t.me/VoiceCraftBitchsBot" target="_blank" class="tg-link-badge">
-              👉 t.me/VoiceCraftBitchsBot
-            </a>
-            <ul class="tg-cmd-list">
-              <li><code>/start</code> — Welcome message and instructions</li>
-              <li><code>/lang hi</code> — Switch speech language to Hindi</li>
-              <li><code>/id</code> — Verify your authorized Telegram ID</li>
-              <li>Send any text — Bot speaks it in your cloned voice!</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-    </section>
-  </main>
-
-  <!-- Recording Tips Modal -->
-  <div class="modal-backdrop" id="tips-modal" style="display:none;">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3>💡 Tips for Perfect Voice Cloning</h3>
-        <button class="close-modal-btn" id="close-tips-btn">&times;</button>
-      </div>
-      <div class="modal-body">
-        <ul>
-          <li><strong>Duration:</strong> 10 to 20 seconds of continuous speech is ideal.</li>
-          <li><strong>Environment:</strong> Record in a quiet room with minimal echo and no background music or television.</li>
-          <li><strong>Microphone:</strong> Speak clearly at a consistent distance (6–8 inches / 15–20 cm) from the mic.</li>
-          <li><strong>Pacing:</strong> Read a natural sentence with normal conversational tone and punctuation pauses.</li>
-        </ul>
-      </div>
-    </div>
+    <!-- Footer -->
+    <footer class="footer">
+      <p class="quiet-text">Voice Studio • Connected to Telegram Bot @VoiceCraftBitchsBot</p>
+    </footer>
   </div>
-
-  <!-- Footer -->
-  <footer class="app-footer">
-    <div class="footer-container">
-      <div class="footer-left">
-        <span>🔒 Audio is watermarked with Perth for ethical AI provenance.</span>
-      </div>
-      <div class="footer-right">
-        <span>VoiceCraft • Chatterbox Multilingual V3</span>
-        <span>•</span>
-        <a href="https://github.com/ajeet3301/VoiceCraft" target="_blank">GitHub & README</a>
-      </div>
-    </div>
-  </footer>
 
   <script src="/static/app.js"></script>
 </body>

@@ -45,6 +45,7 @@ load_dotenv(ENV_PATH, override=True)
 
 # Import existing core functions & models
 from config import load_config, save_config
+import voice_style
 from multilingual_app import (
     get_or_load_model,
     read_audio_file,
@@ -76,6 +77,7 @@ class GenerateRequest(BaseModel):
     text: str
     voice_path: str | None = None
     language: str = "hi"
+    style: str = "natural"
     exaggeration: float = 0.5
     cfg_weight: float = 0.5
     temperature: float = 0.8
@@ -223,6 +225,116 @@ async def upload_voice(file: UploadFile = File(...)):
             temp_path.unlink()
 
 
+@app.get("/api/voices")
+async def get_all_voices():
+    """Returns saved voices from voices/ and bot_data/."""
+    voices_list = []
+    if MY_VOICE_PATH.exists():
+        try:
+            dur = round(sf.info(str(MY_VOICE_PATH)).duration, 1)
+        except Exception:
+            dur = 0.0
+        voices_list.append({
+            "name": "my_voice",
+            "path": str(MY_VOICE_PATH),
+            "duration_s": dur,
+            "is_default": True,
+        })
+
+    bot_data_dir = BASE_DIR / "bot_data"
+    if bot_data_dir.exists():
+        for u_dir in sorted(bot_data_dir.iterdir()):
+            if u_dir.is_dir() and u_dir.name.isdigit():
+                for v_dir in sorted(u_dir.iterdir()):
+                    if v_dir.is_dir() and v_dir.name != "audios" and (v_dir / "ref.wav").exists():
+                        if not any(v["name"].lower() == v_dir.name.lower() for v in voices_list):
+                            try:
+                                dur = round(sf.info(str(v_dir / "ref.wav")).duration, 1)
+                            except Exception:
+                                dur = 0.0
+                            voices_list.append({
+                                "name": v_dir.name,
+                                "path": str(v_dir / "ref.wav"),
+                                "duration_s": dur,
+                                "is_default": False,
+                            })
+    return {"voices": voices_list}
+
+
+@app.post("/api/voices/add")
+async def add_new_voice(name: str = Form(...), file: UploadFile = File(...)):
+    """Uploads or records audio and saves as a named voice profile."""
+    clean_name = re.sub(r"[^\w\s-]", "", name).strip()
+    clean_name = re.sub(r"\s+", " ", clean_name)[:30]
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="Please enter a valid voice name.")
+
+    user_dir = BASE_DIR / "bot_data" / "8011886933" / clean_name
+    user_dir.mkdir(parents=True, exist_ok=True)
+    temp_p = user_dir / f"_temp_{int(time.time())}"
+    target_wav = user_dir / "ref.wav"
+
+    content = await file.read()
+    with open(temp_p, "wb") as f:
+        f.write(content)
+
+    try:
+        data, sr = read_audio_file(temp_p)
+        sf.write(str(target_wav), data, sr, subtype="PCM_16")
+        (user_dir / "ref.txt").write_text(clean_name, encoding="utf-8")
+        if temp_p.exists():
+            temp_p.unlink()
+        return {"status": "ok", "name": clean_name, "message": f"Saved {clean_name}"}
+    except Exception as e:
+        if temp_p.exists():
+            temp_p.unlink()
+        raise HTTPException(status_code=400, detail=f"Failed to process voice sample: {e}")
+
+
+@app.delete("/api/voices/{name}")
+async def delete_saved_voice(name: str):
+    """Deletes a saved voice profile by name."""
+    clean_name = name.strip()
+    deleted = False
+
+    bot_data_dir = BASE_DIR / "bot_data"
+    if bot_data_dir.exists():
+        for u_dir in bot_data_dir.iterdir():
+            if u_dir.is_dir():
+                v_dir = u_dir / clean_name
+                if v_dir.exists() and v_dir.is_dir():
+                    shutil.rmtree(v_dir, ignore_errors=True)
+                    deleted = True
+
+    if not deleted and clean_name == "my_voice":
+        if MY_VOICE_PATH.exists():
+            MY_VOICE_PATH.unlink()
+            deleted = True
+
+    if deleted:
+        return {"status": "ok", "message": f"Deleted voice {clean_name}"}
+    raise HTTPException(status_code=404, detail="Voice not found.")
+
+
+@app.post("/api/detect")
+async def detect_text(payload: dict):
+    """Returns detected text type and mood styling."""
+    text = payload.get("text", "")
+    t_type = voice_style.detect_text_type(text)
+    mood = voice_style.detect_mood(text)
+    labels = {
+        "devanagari": "Hindi (Devanagari)",
+        "roman_hindi": "Hindi (Romanized)",
+        "hinglish": "Hinglish (Mixed)",
+        "english": "English",
+    }
+    return {
+        "type": t_type,
+        "type_label": labels.get(t_type, "English"),
+        "mood": mood,
+    }
+
+
 @app.post("/api/generate/stop")
 async def stop_generation():
     """Signals cancellation to the currently running generation loop."""
@@ -252,7 +364,20 @@ async def generate_speech_endpoint(req: GenerateRequest):
     CURRENT_GENERATION_ID = gen_id
     CANCEL_REQUESTED = False
 
-    chunks = split_text_into_chunks(req.text, max_chars=250)
+    # Auto-detect text type and transliterate Roman Hindi / Hinglish to Devanagari
+    text_type = voice_style.detect_text_type(req.text)
+    clean_text, detected_mood = voice_style.clean_text_for_tts(req.text)
+    effective_style = req.style if (req.style and req.style != "natural") else detected_mood
+
+    if text_type in ("roman_hindi", "hinglish"):
+        clean_text = voice_style.transliterate_to_devanagari(clean_text)
+        language_id = "hi"
+    elif text_type == "devanagari":
+        language_id = "hi"
+    else:
+        language_id = req.language or "en"
+
+    chunks = split_text_into_chunks(clean_text, max_chars=250)
     if not chunks:
         raise HTTPException(status_code=400, detail="No valid sentences found in input.")
 
@@ -291,7 +416,7 @@ async def generate_speech_endpoint(req: GenerateRequest):
                     # Synthesize chunk
                     wav = model.generate(
                         chunk_text,
-                        language_id=req.language,
+                        language_id=language_id,
                         audio_prompt_path=None,
                         exaggeration=float(req.exaggeration),
                         cfg_weight=float(req.cfg_weight),
@@ -331,6 +456,13 @@ async def generate_speech_endpoint(req: GenerateRequest):
             output_filename = f"{gen_id}.wav"
             output_filepath = OUTPUTS_DIR / output_filename
             sf.write(str(output_filepath), final_audio, sr, subtype="PCM_16")
+
+            # Apply mood/style audio shaping if requested or detected
+            if effective_style and effective_style != "natural":
+                styled_path = OUTPUTS_DIR / f"{gen_id}_styled.wav"
+                voice_style.apply_audio_style(output_filepath, styled_path, style=effective_style)
+                if styled_path.exists():
+                    shutil.move(str(styled_path), str(output_filepath))
 
             total_duration = len(final_audio) / sr
             total_time = time.perf_counter() - start_time

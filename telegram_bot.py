@@ -1,28 +1,7 @@
 """
-VoiceCraft Telegram Bot
------------------------
-Flow:
-  1. User sends a voice/audio message  -> Bot asks: "Whose voice is this?" and saves
-                                          audio & transcript in bot_data/<user_id>/<name>/
-  2. User sends text                   -> Bot displays buttons with all saved voice names.
-                                          User taps a name and bot generates speech in that voice.
-  3. Audio Management:
-     - Each generated audio has [ 💾 Save Audio ] and [ 🗑 Delete Audio ] buttons.
-     - /audios lists recent generated audio messages with instant action buttons.
-  4. Access & Resource Control:
-     - Configurable from localhost (http://127.0.0.1:7860/#tab-settings):
-       - Max Allowed Users (TELEGRAM_MAX_USERS)
-       - Max Words Per Request (TELEGRAM_MAX_WORDS)
-       - Authorized Telegram User IDs (ALLOWED_TELEGRAM_USER_IDS)
-  5. Commands:
-     /voices        - List all saved voices
-     /delete <name> - Remove a specific saved voice
-     /audios        - Manage recent generated audios
-     /clear_audios  - Delete all generated audio history
-     /status        - View bot statistics and limits
-     /restart       - Restart the bot process
-     /start         - Overview & instructions
-     /id            - Check Telegram User ID
+Telegram Voice Studio Bot
+Claude-style minimal, calm, and polite interface.
+Zero emojis, clean typography, single-message status flow, Hindi transliteration.
 """
 
 import asyncio
@@ -34,7 +13,6 @@ import subprocess
 import sys
 import time
 
-# Ensure UTF-8 console output on Windows
 if sys.platform == "win32":
     try:
         if hasattr(sys.stdout, "reconfigure"):
@@ -65,18 +43,21 @@ from telegram.ext import (
     filters,
 )
 
+import messages
+import voice_style
+
 BOT_TOKEN = os.environ.get("BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN or BOT_TOKEN.strip() == "your_telegram_bot_token_here":
-    print("[ERROR] BOT_TOKEN or TELEGRAM_BOT_TOKEN is missing. Set it in .env or localhost settings.")
+    print("Error: Telegram bot token is missing. Configure it in .env or the web studio.")
     sys.exit(1)
 
 DATA = BASE_DIR / "bot_data"
 DATA.mkdir(exist_ok=True)
 
-MAX_REF_SECONDS = 15          # Max reference audio duration in seconds
-DEFAULT_SEC_PER_CHAR = 0.35   # First-run guess, auto-calibrated after each job
+MAX_REF_SECONDS = 15
+DEFAULT_SEC_PER_CHAR = 0.35
 
-gpu_lock = asyncio.Lock()      # One job at a time (protects compute & memory)
+gpu_lock = asyncio.Lock()
 sec_per_char = DEFAULT_SEC_PER_CHAR
 _whisper = None
 _tts_model = None
@@ -84,7 +65,6 @@ _tts_model = None
 
 # ---------------------------------------------------------------- Settings Helpers ---
 def reload_env():
-    """Reloads .env so changes in localhost settings apply instantly."""
     load_dotenv(ENV_PATH, override=True)
 
 
@@ -117,7 +97,6 @@ def get_allowed_user_ids() -> set[int]:
 
 
 def get_active_user_ids() -> set[int]:
-    """Finds all users who have active profiles in bot_data."""
     uids = set()
     if DATA.exists():
         for p in DATA.iterdir():
@@ -147,33 +126,24 @@ def set_user_lang(uid: int, lang_code: str):
 
 
 def is_authorized(uid: int) -> bool:
-    """Checks if the user ID is permitted under current whitelist & user capacity limits."""
     allowed = get_allowed_user_ids()
     if allowed and uid in allowed:
         return True
-
-    # If whitelist is explicitly set and user is not in it, reject
     if allowed and uid not in allowed:
         return False
 
-    # Otherwise check capacity (max_users)
     max_users = get_max_users()
     active_users = get_active_user_ids()
 
     if uid in active_users:
         return True
-
     if max_users > 0 and len(active_users) >= max_users:
         return False
-
     return True
 
 
 async def check_auth(update: Update) -> bool:
-    """Verifies authorization and informs user if capped or unauthorized."""
     uid = update.effective_user.id if update.effective_user else 0
-    user_name = update.effective_user.first_name if update.effective_user else "User"
-
     if is_authorized(uid):
         return True
 
@@ -187,26 +157,17 @@ async def check_auth(update: Update) -> bool:
 
     if max_users > 0 and uid not in active_users and len(active_users) >= max_users and (not allowed or uid not in allowed):
         await msg.reply_text(
-            f"🚫 *User Capacity Reached*\n\n"
-            f"Hello {user_name}, this bot is currently capped at *{max_users}* user(s).\n\n"
-            f"💡 To allow more users, increase **Max Allowed Users** on the localhost settings panel (`http://127.0.0.1:7860/#tab-settings`).\n\n"
-            f"Your Telegram ID: `{uid}`",
-            parse_mode="Markdown",
+            messages.BOT_CAPACITY_REACHED.format(max_users=max_users)
         )
         return False
 
     await msg.reply_text(
-        f"🚫 *Access Restricted*\n\n"
-        f"Hello {user_name}, this private VoiceCraft bot is configured for authorized users only.\n\n"
-        f"To grant access, add your ID on localhost settings (`http://127.0.0.1:7860`) or in `.env`:\n"
-        f"Your Telegram ID: `{uid}`",
-        parse_mode="Markdown",
+        messages.BOT_ACCESS_RESTRICTED.format(uid=uid)
     )
     return False
 
 
 def get_ffmpeg_exe() -> str:
-    """Locate ffmpeg binary from PATH or bundled imageio-ffmpeg."""
     if shutil.which("ffmpeg"):
         return "ffmpeg"
     try:
@@ -229,33 +190,22 @@ def user_audios_dir(uid: int) -> Path:
 
 
 def get_user_voices(uid: int) -> list[str]:
-    """Returns list of voice profile names saved by the user."""
     d = user_dir(uid)
-
-    # Automatically load 'my_voice' as default if voices/my_voice.wav exists
     default_src = BASE_DIR / "voices" / "my_voice.wav"
     user_my_voice = d / "my_voice"
     deleted_marker = d / ".deleted_my_voice"
+
     if default_src.exists() and not user_my_voice.exists() and not deleted_marker.exists():
         try:
             user_my_voice.mkdir(parents=True, exist_ok=True)
             to_wav(default_src, user_my_voice / "ref.wav", max_seconds=15)
             try:
-                txt = transcribe(user_my_voice / "ref.wav")
+                txt = transcribe(user_my_voice / "ref.wav", language="hi")
             except Exception:
-                txt = "Default my_voice sample"
-            (user_my_voice / "ref.txt").write_text(txt or "Default my_voice sample", encoding="utf-8")
-        except Exception as e:
-            print(f"[VoiceCraft Bot] Default my_voice init notice: {e}")
-
-    # Legacy migration: if ref.wav is at root of user_dir, migrate to my_voice
-    legacy_ref = d / "ref.wav"
-    if legacy_ref.exists():
-        user_my_voice.mkdir(exist_ok=True)
-        shutil.move(str(legacy_ref), str(user_my_voice / "ref.wav"))
-        legacy_txt = d / "ref.txt"
-        if legacy_txt.exists():
-            shutil.move(str(legacy_txt), str(user_my_voice / "ref.txt"))
+                txt = "Reference voice sample"
+            (user_my_voice / "ref.txt").write_text(txt or "Reference voice sample", encoding="utf-8")
+        except Exception:
+            pass
 
     voices = []
     if d.exists():
@@ -266,7 +216,6 @@ def get_user_voices(uid: int) -> list[str]:
 
 
 def to_wav(src: Path, dst: Path, max_seconds: int = MAX_REF_SECONDS):
-    """Convert anything to 16 kHz mono wav and trim to max_seconds."""
     ffmpeg = get_ffmpeg_exe()
     subprocess.run(
         [
@@ -280,19 +229,23 @@ def to_wav(src: Path, dst: Path, max_seconds: int = MAX_REF_SECONDS):
     )
 
 
-def transcribe(wav: Path) -> str:
-    """VoiceCraft reference audio transcription using faster-whisper."""
+def transcribe(wav: Path, language: str = "hi") -> str:
     global _whisper
     if _whisper is None:
         from faster_whisper import WhisperModel
         _whisper = WhisperModel("base", compute_type="int8")
-    segments, _ = _whisper.transcribe(str(wav))
-    return " ".join(s.text.strip() for s in segments).strip()
+    try:
+        segments, _ = _whisper.transcribe(str(wav), language=language)
+        return " ".join(s.text.strip() for s in segments).strip()
+    except Exception:
+        # Fallback to auto-detect language
+        segments, _ = _whisper.transcribe(str(wav))
+        return " ".join(s.text.strip() for s in segments).strip()
 
 
-def bar(pct: int, width: int = 12) -> str:
+def minimal_progress_bar(pct: int, width: int = 14) -> str:
     filled = max(0, min(width, int(width * pct / 100)))
-    return "█" * filled + "░" * (width - filled) + f" {pct}%"
+    return "|" * filled + "." * (width - filled) + f"  {pct}%"
 
 
 def fmt_time(sec: float) -> str:
@@ -302,38 +255,28 @@ def fmt_time(sec: float) -> str:
 
 # ------------------------------------------------------- MODEL CONNECTION ---
 def get_tts_model():
-    """Load Chatterbox Multilingual TTS model once at module level."""
     global _tts_model
     if _tts_model is None:
         from chatterbox.mtl_tts import ChatterboxMultilingualTTS
         device = "cuda" if torch.cuda.is_available() else "cpu"
         t3_model = os.getenv("CHATTERBOX_MULTILINGUAL_T3_MODEL", "v3")
-        print(f"[VoiceCraft Bot] Loading TTS model ({t3_model}) on {device.upper()}...")
+        print(f"Loading TTS model ({t3_model}) on {device}...")
         _tts_model = ChatterboxMultilingualTTS.from_pretrained(device, t3_model=t3_model)
         if hasattr(_tts_model, "eval"):
             _tts_model.eval()
-        print("[VoiceCraft Bot] TTS Model ready in memory!")
+        print("TTS Model loaded successfully.")
     return _tts_model
 
 
 def voicecraft_generate(ref_wav: str, ref_text: str, text: str, out_wav: str, lang: str = "hi"):
-    """
-    Connected VoiceCraft inference engine.
-    - If local VoiceCraft server is active (port 7860), reuses warm model via HTTP.
-    - If running standalone, runs ChatterboxMultilingualTTS directly.
-    - Uses in-memory sentence chunking and crossfade smoothing.
-    - Saves single final continuous output to out_wav (zero chunk files on disk).
-    """
     import urllib.request
     import json
 
-    if not lang:
-        lang = "hi" if any("\u0900" <= ch <= "\u097f" for ch in text) else os.getenv("TELEGRAM_DEFAULT_LANG", "hi")
     server_port = os.getenv("SERVER_PORT", "7860")
     server_host = os.getenv("SERVER_HOST", "127.0.0.1")
     server_url = f"http://{server_host}:{server_port}"
 
-    # 1. Attempt to reuse already-warm model from running server process
+    # 1. Local server dispatch
     try:
         req_data = json.dumps({
             "text": text,
@@ -357,14 +300,13 @@ def voicecraft_generate(ref_wav: str, ref_text: str, text: str, out_wav: str, la
                             source_path = BASE_DIR / rel_url
                             if source_path.exists():
                                 shutil.copy(source_path, out_wav)
-                                print(f"[VoiceCraft Bot] Generated via local server: {out_wav}")
                                 return
                     except Exception:
                         pass
-    except Exception as srv_err:
-        print(f"[VoiceCraft Bot] Local server dispatch notice ({srv_err}); using direct model...")
+    except Exception:
+        pass
 
-    # 2. Standalone fallback: execute directly via ChatterboxMultilingualTTS
+    # 2. Standalone fallback
     model = get_tts_model()
     model.prepare_conditionals(ref_wav, exaggeration=0.5)
 
@@ -389,39 +331,18 @@ def voicecraft_generate(ref_wav: str, ref_text: str, text: str, out_wav: str, la
 
     joined = join_audio_chunks(chunks_audio, model.sr, pause_ms=180, crossfade_ms=30)
     sf.write(out_wav, joined, model.sr, format="WAV", subtype="PCM_16")
-    print(f"[VoiceCraft Bot] Audio generated directly: {out_wav} ({len(joined)/model.sr:.2f}s)")
 
 
 # --------------------------------------------------------------- Handlers ---
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not await check_auth(update):
         return
-
-    max_w = get_max_words()
-    max_u = get_max_users()
-
-    await update.message.reply_text(
-        "🎙 *VoiceCraft Multilingual Studio Bot*\n\n"
-        "1️⃣ *Send a voice message* – I'll ask: _\"Whose voice is this?\"_ and save it under your chosen name.\n"
-        "2️⃣ *Send any text* – Choose from your saved voices to speak it!\n"
-        "3️⃣ *Audio Controls* – Every audio has instant `[ 💾 Save Audio ]` and `[ 🗑 Delete Audio ]` buttons.\n\n"
-        f"⚙️ *Current Limits:* Max words: `{max_w}` | Max users: `{max_u if max_u>0 else 'Unlimited'}`\n\n"
-        "Commands:\n"
-        "• `/voices` – List all saved voice profiles\n"
-        "• `/audios` – View and manage recent generated audios\n"
-        "• `/lang` – View or switch speech language (Default: Hindi)\n"
-        "• `/delete <name>` – Delete a saved voice profile\n"
-        "• `/clear_audios` – Clear cached audio files\n"
-        "• `/status` – View system status and config\n"
-        "• `/restart` – Restart bot process\n"
-        "• `/id` – Check your Telegram User ID",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text(messages.BOT_START)
 
 
 async def id_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id if update.effective_user else 0
-    await update.message.reply_text(f"🆔 Your Telegram User ID: `{uid}`", parse_mode="Markdown")
+    await update.message.reply_text(f"User ID: {uid}")
 
 
 async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -430,24 +351,18 @@ async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     uid = update.effective_user.id
     max_w = get_max_words()
-    max_u = get_max_users()
     cur_lang = get_user_lang(uid)
-    flag = "🇮🇳" if cur_lang == "hi" else ("🇬🇧" if cur_lang == "en" else "🌐")
-    active_u = get_active_user_ids()
     voices = get_user_voices(uid)
     audios = list(user_audios_dir(uid).glob("*.wav"))
 
-    await update.message.reply_text(
-        "📊 *VoiceCraft Bot Status*\n\n"
-        f"• *Default Language:* {flag} `{cur_lang.upper()}` (change via `/lang`)\n"
-        f"• *Max Words Per Request:* `{max_w}` words\n"
-        f"• *Max Allowed Users:* `{max_u if max_u>0 else 'Unlimited'}` (Currently active: `{len(active_u)}`)\n"
-        f"• *Your Saved Voices:* `{len(voices)}`\n"
-        f"• *Your Cached Audios:* `{len(audios)}`\n"
-        f"• *Hardware Engine:* `{'CUDA (GPU)' if torch.cuda.is_available() else 'CPU'}`\n\n"
-        f"💡 Change limits anytime on localhost: `http://127.0.0.1:7860/#tab-settings`",
-        parse_mode="Markdown",
+    lang_display = "Hindi" if cur_lang == "hi" else ("English" if cur_lang == "en" else cur_lang)
+    txt = messages.BOT_STATUS.format(
+        voice_count=len(voices),
+        audio_count=len(audios),
+        max_words=max_w,
+        language=lang_display
     )
+    await update.message.reply_text(txt)
 
 
 async def on_audio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -459,39 +374,38 @@ async def on_audio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     d = user_dir(uid)
 
-    status = await msg.reply_text("⬇️ Receiving voice sample… " + bar(15))
+    status_msg = await msg.reply_text(messages.BOT_RECEIVING_AUDIO)
     temp_raw = d / "_temp_raw"
     temp_wav = d / "_temp_ref.wav"
     f = await media.get_file()
     await f.download_to_drive(temp_raw)
 
-    await status.edit_text("🔧 Normalizing audio… " + bar(45))
+    await status_msg.edit_text(messages.BOT_PROCESSING_AUDIO)
     try:
         to_wav(temp_raw, temp_wav)
-    except Exception as e:
-        await status.edit_text(f"❌ Failed to process audio: {e}")
+    except Exception:
+        await status_msg.edit_text(messages.BOT_ERROR_AUDIO_QUALITY)
         return
 
-    await status.edit_text("🧠 Analyzing voice… " + bar(75))
+    await status_msg.edit_text(messages.BOT_ANALYZING_VOICE)
     try:
-        ref_text = await asyncio.to_thread(transcribe, temp_wav)
+        ref_text = await asyncio.to_thread(transcribe, temp_wav, "hi")
     except Exception:
-        ref_text = "Reference Voice"
+        ref_text = "Reference voice"
 
     if not ref_text or not ref_text.strip():
-        ref_text = "Reference Voice"
+        ref_text = "Reference voice"
 
-    # Store pending voice in user_data awaiting name response
     ctx.user_data["pending_voice"] = {
         "wav": str(temp_wav),
         "text": ref_text,
+        "status_msg_id": status_msg.message_id
     }
 
-    await status.edit_text(
-        f"🎙 *Whose voice is this?*\n\n"
-        f"Reply with the name for this voice:\n\n"
-        f"📝 _I heard: {ref_text[:120]}_",
-        parse_mode="Markdown",
+    transcript_preview = f"\n\n_{ref_text[:90]}_" if ref_text else ""
+    await status_msg.edit_text(
+        f"{messages.BOT_ASK_VOICE_NAME}{transcript_preview}",
+        parse_mode="Markdown"
     )
 
 
@@ -503,19 +417,18 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     d = user_dir(uid)
 
-    # 1. Check if user is naming a newly recorded voice
+    # 1. Naming a voice sample
     if "pending_voice" in ctx.user_data:
         pending = ctx.user_data.pop("pending_voice")
         voice_name = re.sub(r"[^\w\s-]", "", text).strip()
-        voice_name = re.sub(r"\s+", " ", voice_name)[:30]
+        voice_name = re.sub(r"\s+", " ", voice_name)[:25]
         if not voice_name:
             ctx.user_data["pending_voice"] = pending
-            await update.message.reply_text("❌ Please enter a name for this voice:")
+            await update.message.reply_text("Please enter a name to save this voice.")
             return
 
         target_dir = d / voice_name
         target_dir.mkdir(parents=True, exist_ok=True)
-
         shutil.move(pending["wav"], str(target_dir / "ref.wav"))
         (target_dir / "ref.txt").write_text(pending["text"], encoding="utf-8")
 
@@ -527,10 +440,7 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 pass
 
         await update.message.reply_text(
-            f"✅ Saved voice as *{voice_name}*! {bar(100)}\n\n"
-            f"📝 *Transcript:* _{pending['text']}_\n\n"
-            f"👉 Now send me any text to speak in *{voice_name}*'s voice!",
-            parse_mode="Markdown",
+            messages.BOT_VOICE_SAVED.format(name=voice_name)
         )
         return
 
@@ -539,52 +449,53 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     max_words = get_max_words()
     if len(words) > max_words:
         await update.message.reply_text(
-            f"⚠️ *Text exceeds maximum word limit!*\n\n"
-            f"Your message contains *{len(words)} words*, but the limit is currently set to *{max_words} words*.\n\n"
-            f"💡 Please shorten your text or increase **Max Words Per Request** in the Localhost Settings panel (`http://127.0.0.1:7860/#tab-settings`).",
-            parse_mode="Markdown",
+            messages.BOT_TEXT_TOO_LONG.format(max_words=max_words)
         )
         return
 
-    # 3. User is sending text to synthesize!
+    # 3. Check for saved voices
     voices = get_user_voices(uid)
     if not voices:
-        await update.message.reply_text(
-            "🎤 You don't have any saved voices yet!\n\n"
-            "Send me a voice message first, and I will ask you for a name to save it.",
-            parse_mode="Markdown",
-        )
+        await update.message.reply_text(messages.BOT_NO_VOICES)
         return
 
-    # Store text for voice selection callback
-    ctx.user_data["pending_text"] = text
+    # Auto-detect text type and transliterate Roman Hindi / Hinglish to Devanagari
+    text_type = voice_style.detect_text_type(text)
+    clean_text, style = voice_style.clean_text_for_tts(text)
 
-    # Build inline keyboard for voice selection
+    if text_type in ("roman_hindi", "hinglish"):
+        clean_text = voice_style.transliterate_to_devanagari(clean_text)
+
+    # Store in context
+    ctx.user_data["pending_text"] = clean_text
+    ctx.user_data["detected_style"] = style
+    ctx.user_data["target_lang"] = "hi" if text_type in ("devanagari", "roman_hindi", "hinglish") else "en"
+
+    # Present voices in clean rows (maximum 3 buttons per row)
     keyboard = []
     row = []
     for v in voices:
-        row.append(InlineKeyboardButton(f"🎙 {v}", callback_data=f"voice:{v}"))
-        if len(row) == 2:
+        row.append(InlineKeyboardButton(v, callback_data=f"voice:{v}"))
+        if len(row) == 3:
             keyboard.append(row)
             row = []
     if row:
         keyboard.append(row)
 
+    preview = f"_{clean_text[:80]}..._" if len(clean_text) > 80 else f"_{clean_text}_"
     await update.message.reply_text(
-        f"💬 *Text ({len(words)} words):* \"{text[:120]}{'...' if len(text)>120 else ''}\"\n\n"
-        f"👉 *Whose voice should speak this?*",
+        f"{preview}\n\n{messages.BOT_CHOOSE_VOICE}",
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
+        parse_mode="Markdown"
     )
 
 
 async def on_voice_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Handles tapping a voice profile button."""
     query = update.callback_query
     await query.answer()
 
     if not is_authorized(query.from_user.id):
-        await query.edit_message_text("🚫 Unauthorized.")
+        await query.edit_message_text("Access restricted.")
         return
 
     uid = query.from_user.id
@@ -593,58 +504,48 @@ async def on_voice_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     voice_dir = d / voice_name
 
     if not (voice_dir / "ref.wav").exists():
-        await query.edit_message_text(f"❌ Voice *{voice_name}* not found. Send text again to choose another.")
+        await query.edit_message_text(messages.BOT_VOICE_NOT_FOUND)
         return
 
     text = ctx.user_data.get("pending_text", "")
+    style = ctx.user_data.get("detected_style", "natural")
+    target_lang = ctx.user_data.get("target_lang", "hi")
+
     if not text and query.message and query.message.text:
         msg_text = query.message.text
-        if '💬 Text' in msg_text and '"' in msg_text:
+        if "_" in msg_text:
             try:
-                text = msg_text.split('"', 1)[1].rsplit('"', 1)[0].strip()
+                text = msg_text.split("_", 1)[1].split("_", 1)[0].strip()
             except Exception:
                 pass
-        if not text and "👉 Whose voice should speak this?" in msg_text:
-            text = msg_text.replace("👉 Whose voice should speak this?", "").strip()
 
     if not text:
-        try:
-            await query.edit_message_text("⚠️ Please send your text message again.")
-        except Exception:
-            pass
+        await query.edit_message_text("Please send your text again.")
         return
 
-    # Generate unique audio ID
-    audio_id = f"{int(time.time())}_{re.sub(r'[^a-zA-Z0-9]', '', voice_name)[:10]}"
+    audio_id = f"{int(time.time())}_{re.sub(r'[^a-zA-Z0-9]', '', voice_name)[:8]}"
     audios_dir = user_audios_dir(uid)
+    raw_wav = audios_dir / f"{audio_id}_raw.wav"
     out_wav = audios_dir / f"{audio_id}.wav"
     out_ogg = audios_dir / f"{audio_id}.ogg"
     meta_txt = audios_dir / f"{audio_id}.txt"
 
     global sec_per_char
-    estimate = max(5, len(text) * sec_per_char)
-    queue_note = "\n⏳ Another job is currently running, you're queued next." if gpu_lock.locked() else ""
+    estimate = max(4, len(text) * sec_per_char)
+    queued_note = f"\n\n{messages.BOT_GENERATING_QUEUED}" if gpu_lock.locked() else ""
 
-    try:
-        await query.edit_message_text(
-            f"🎙 Generating voice as *{voice_name}*…\n"
-            f"⏱ Estimated time: ~{fmt_time(estimate)}{queue_note}\n{bar(0)}",
-            parse_mode="Markdown",
-        )
-    except Exception:
-        pass
+    progress_line = minimal_progress_bar(0)
+    await query.edit_message_text(
+        f"Generating  {progress_line}  About {fmt_time(estimate)} left{queued_note}"
+    )
 
     ref_wav = str(voice_dir / "ref.wav")
     ref_text = (voice_dir / "ref.txt").read_text(encoding="utf-8") if (voice_dir / "ref.txt").exists() else "Reference"
 
-    user_lang = get_user_lang(uid)
-    if any("\u0900" <= ch <= "\u097f" for ch in text):
-        user_lang = "hi"
-
     async with gpu_lock:
         start_t = time.time()
         job = asyncio.create_task(
-            asyncio.to_thread(voicecraft_generate, ref_wav, ref_text, text, str(out_wav), user_lang)
+            asyncio.to_thread(voicecraft_generate, ref_wav, ref_text, text, str(raw_wav), target_lang)
         )
 
         last = -1
@@ -654,39 +555,42 @@ async def on_voice_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if pct != last:
                 last = pct
                 left = max(1, estimate - (time.time() - start_t))
+                progress_line = minimal_progress_bar(pct)
                 try:
                     await query.edit_message_text(
-                        f"🎙 Generating voice as *{voice_name}*… ~{fmt_time(left)} remaining\n{bar(pct)}",
-                        parse_mode="Markdown",
+                        f"Generating  {progress_line}  About {fmt_time(left)} left"
                     )
                 except Exception:
                     pass
 
         try:
             await job
-        except Exception as e:
-            try:
-                await query.edit_message_text(f"❌ Generation failed: {e}")
-            except Exception:
-                pass
+        except Exception:
+            await query.edit_message_text(messages.BOT_ERROR_GENERIC)
             return
 
         took = time.time() - start_t
         sec_per_char = 0.7 * sec_per_char + 0.3 * (took / max(1, len(text)))
 
-    # Save metadata for /audios manager
+    # Apply mood/style audio post-processing
+    voice_style.apply_audio_style(raw_wav, out_wav, style=style)
+    if raw_wav.exists() and raw_wav != out_wav:
+        try:
+            raw_wav.unlink()
+        except Exception:
+            pass
+
     try:
         meta_txt.write_text(f"{voice_name}:::{text}", encoding="utf-8")
     except Exception:
         pass
 
+    # Update single message to "Ready."
     try:
-        await query.edit_message_text(
-            f"✅ Spoken as *{voice_name}* in {fmt_time(took)}! {bar(100)}",
-            parse_mode="Markdown",
-        )
+        await query.edit_message_text(messages.BOT_DONE)
     except Exception:
         pass
+
     await query.message.chat.send_action(ChatAction.RECORD_VOICE)
 
     # Convert to OGG/Opus for Telegram voice note
@@ -702,15 +606,15 @@ async def on_voice_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except Exception:
         converted_ogg = False
 
-    # Audio Action Buttons: Save & Delete
+    # Plain text buttons: Save and Delete
     audio_markup = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("💾 Save Audio", callback_data=f"save_audio:{audio_id}"),
-            InlineKeyboardButton("🗑 Delete Audio", callback_data=f"del_audio:{audio_id}"),
+            InlineKeyboardButton("Save", callback_data=f"save_audio:{audio_id}"),
+            InlineKeyboardButton("Delete", callback_data=f"del_audio:{audio_id}"),
         ]
     ])
 
-    caption_text = f"🗣 {voice_name}: {text[:180]}"
+    caption_text = f"{voice_name}: {text[:140]}"
     try:
         if converted_ogg and out_ogg.exists():
             with open(out_ogg, "rb") as fh:
@@ -719,63 +623,49 @@ async def on_voice_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             with open(out_wav, "rb") as fh:
                 await query.message.reply_audio(
                     fh,
-                    filename=f"{voice_name}_voicecraft.wav",
-                    title=f"VoiceCraft ({voice_name})",
-                    performer=voice_name,
+                    filename=f"{voice_name}.wav",
+                    title=f"{voice_name}",
                     caption=caption_text,
                     reply_markup=audio_markup,
                 )
     except Exception as send_err:
-        await query.message.reply_text(f"❌ Failed to send voice: {send_err}")
+        await query.message.reply_text(f"Could not send audio: {send_err}")
 
 
-# ---------------------------------------------------- Audio Management Callbacks ---
 async def on_del_audio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Deletes the audio file from disk and deletes or updates the Telegram message."""
     query = update.callback_query
     await query.answer()
 
     if not is_authorized(query.from_user.id):
-        await query.answer("🚫 Unauthorized.", show_alert=True)
+        await query.answer("Access restricted.", show_alert=True)
         return
 
     uid = query.from_user.id
     audio_id = query.data.split("del_audio:", 1)[1]
     audios_dir = user_audios_dir(uid)
 
-    wav_p = audios_dir / f"{audio_id}.wav"
-    ogg_p = audios_dir / f"{audio_id}.ogg"
-    txt_p = audios_dir / f"{audio_id}.txt"
-
-    # Delete local files
-    for p in (wav_p, ogg_p, txt_p):
+    for ext in (".wav", ".ogg", ".txt"):
+        p = audios_dir / f"{audio_id}{ext}"
         if p.exists():
             try:
                 p.unlink()
             except Exception:
                 pass
 
-    # Delete message from chat
     try:
         await query.message.delete()
-        await query.answer("🗑 Audio deleted successfully!", show_alert=False)
+        await query.answer(messages.BOT_AUDIO_DELETED, show_alert=False)
     except Exception:
         try:
-            await query.edit_message_caption(caption="🗑 *Audio has been deleted.*", parse_mode="Markdown")
+            await query.edit_message_caption(caption=messages.BOT_AUDIO_DELETED)
         except Exception:
-            try:
-                await query.edit_message_text("🗑 *Audio has been deleted.*", parse_mode="Markdown")
-            except Exception:
-                pass
-        await query.answer("🗑 Audio deleted!", show_alert=False)
+            pass
 
 
 async def on_save_audio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Permanently saves the generated audio to the project outputs/ folder."""
     query = update.callback_query
-
     if not is_authorized(query.from_user.id):
-        await query.answer("🚫 Unauthorized.", show_alert=True)
+        await query.answer("Access restricted.", show_alert=True)
         return
 
     uid = query.from_user.id
@@ -791,26 +681,49 @@ async def on_save_audio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         shutil.copy(wav_p, target_wav)
         new_markup = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("✅ Saved to Outputs", callback_data=f"saved_done:{audio_id}"),
-                InlineKeyboardButton("🗑 Delete Audio", callback_data=f"del_audio:{audio_id}"),
+                InlineKeyboardButton("Saved", callback_data=f"saved_done:{audio_id}"),
+                InlineKeyboardButton("Delete", callback_data=f"del_audio:{audio_id}"),
             ]
         ])
         try:
             await query.edit_message_reply_markup(reply_markup=new_markup)
         except Exception:
             pass
-        await query.answer(f"💾 Saved to outputs/saved_{audio_id}.wav! Visible in History tab.", show_alert=True)
+        await query.answer(messages.BOT_AUDIO_SAVED, show_alert=True)
     else:
-        await query.answer("⚠️ Original audio file not found.", show_alert=True)
+        await query.answer("Audio file not found.", show_alert=True)
 
 
 async def on_saved_done(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer("✅ This audio is already permanently saved in .\outputs\ folder.", show_alert=True)
+    await query.answer("This audio is already saved in outputs.", show_alert=False)
+
+
+async def voices_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await check_auth(update):
+        return
+
+    uid = update.effective_user.id
+    voices = get_user_voices(uid)
+    if not voices:
+        await update.message.reply_text(messages.BOT_NO_VOICES)
+        return
+
+    lines = ["Saved voices:\n"]
+    for idx, name in enumerate(voices, 1):
+        v_dir = user_dir(uid) / name
+        txt_path = v_dir / "ref.txt"
+        transcript = txt_path.read_text(encoding="utf-8")[:50] if txt_path.exists() else ""
+        if transcript:
+            lines.append(f"{idx}. {name} - _{transcript}_")
+        else:
+            lines.append(f"{idx}. {name}")
+
+    lines.append("\nUse /delete <name> to remove a voice.")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
 async def audios_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Lists recent generated audios with Save & Delete buttons."""
     if not await check_auth(update):
         return
 
@@ -819,18 +732,11 @@ async def audios_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     txt_files = sorted(audios_dir.glob("*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not txt_files:
-        wav_files = sorted(audios_dir.glob("*.wav"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if not wav_files:
-            await update.message.reply_text("📂 You have no generated audios saved yet.")
-            return
-        txt_files = wav_files
+        await update.message.reply_text("No generated audio found.")
+        return
 
     recent = txt_files[:5]
-    await update.message.reply_text(
-        f"📁 *Your Recent Generated Audios ({len(txt_files)} total):*\n"
-        f"Showing latest {len(recent)} audios. Use `[ 💾 Save ]` or `[ 🗑 Delete ]`:",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text(f"Recent audios ({len(txt_files)} total):")
 
     for item in recent:
         stem = item.stem
@@ -844,16 +750,16 @@ async def audios_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 content = txt_p.read_text(encoding="utf-8")
                 if ":::" in content:
                     v_name, txt_body = content.split(":::", 1)
-                    caption = f"🗣 {v_name}: {txt_body[:100]}"
+                    caption = f"{v_name}: {txt_body[:80]}"
                 else:
-                    caption = content[:100]
+                    caption = content[:80]
             except Exception:
                 pass
 
         markup = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("💾 Save Audio", callback_data=f"save_audio:{stem}"),
-                InlineKeyboardButton("🗑 Delete Audio", callback_data=f"del_audio:{stem}"),
+                InlineKeyboardButton("Save", callback_data=f"save_audio:{stem}"),
+                InlineKeyboardButton("Delete", callback_data=f"del_audio:{stem}"),
             ]
         ])
 
@@ -866,7 +772,6 @@ async def audios_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def clear_audios_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Deletes all cached audio files for this user."""
     if not await check_auth(update):
         return
 
@@ -880,95 +785,16 @@ async def clear_audios_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 deleted += 1
             except Exception:
                 pass
-
-    await update.message.reply_text(f"🧹 Cleaned up {deleted} cached audio files.")
-
-
-async def restart_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Restarts the bot daemon process."""
-    if not await check_auth(update):
-        return
-
-    await update.message.reply_text("🔄 Restarting VoiceCraft Bot...")
-    os.execv(sys.executable, [sys.executable] + sys.argv)
-
-
-async def lang_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """View or switch speech synthesis language (default Hindi)."""
-    if not await check_auth(update):
-        return
-
-    uid = update.effective_user.id
-    current_lang = get_user_lang(uid)
-
-    if ctx.args:
-        new_lang = ctx.args[0].lower().strip()
-        set_user_lang(uid, new_lang)
-        flag = "🇮🇳" if new_lang == "hi" else ("🇬🇧" if new_lang == "en" else "🌐")
-        await update.message.reply_text(f"✅ Default speech language set to *{flag} {new_lang.upper()}*!", parse_mode="Markdown")
-        return
-
-    markup = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🇮🇳 Hindi (hi)" + (" ✓" if current_lang == "hi" else ""), callback_data="setlang:hi"),
-            InlineKeyboardButton("🇬🇧 English (en)" + (" ✓" if current_lang == "en" else ""), callback_data="setlang:en"),
-        ]
-    ])
-    flag = "🇮🇳" if current_lang == "hi" else ("🇬🇧" if current_lang == "en" else "🌐")
-    await update.message.reply_text(
-        f"🌐 *Default Speech Language: {flag} {current_lang.upper()}*\n\n"
-        f"Tap below to switch or use `/lang <code>` (e.g. `/lang hi`):",
-        reply_markup=markup,
-        parse_mode="Markdown",
-    )
-
-
-async def on_setlang_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    uid = query.from_user.id
-    code = query.data.split("setlang:", 1)[1]
-    set_user_lang(uid, code)
-    flag = "🇮🇳" if code == "hi" else ("🇬🇧" if code == "en" else "🌐")
-    await query.edit_message_text(f"✅ Default speech language updated to *{flag} {code.upper()}*!", parse_mode="Markdown")
-
-
-async def voices_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Lists all voices saved by the user."""
-    if not await check_auth(update):
-        return
-
-    uid = update.effective_user.id
-    voices = get_user_voices(uid)
-    if not voices:
-        await update.message.reply_text(
-            "🎙 You have no saved voices yet.\nSend me a voice message to save one!",
-            parse_mode="Markdown",
-        )
-        return
-
-    lines = ["🎙 *Your Saved Voices:*\n"]
-    for idx, name in enumerate(voices, 1):
-        v_dir = user_dir(uid) / name
-        txt_path = v_dir / "ref.txt"
-        transcript = txt_path.read_text(encoding="utf-8")[:60] if txt_path.exists() else "Voice reference"
-        lines.append(f"{idx}. *{name}* – _{transcript}_")
-
-    lines.append("\n💡 To delete a voice: `/delete <name>`")
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text(f"Deleted {deleted} cached files.")
 
 
 async def delete_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Deletes a specific saved voice by name."""
     if not await check_auth(update):
         return
 
     uid = update.effective_user.id
     if not ctx.args:
-        await update.message.reply_text(
-            "⚠️ Please specify which voice to delete.\nUsage: `/delete <name>`",
-            parse_mode="Markdown",
-        )
+        await update.message.reply_text("Please specify which voice to delete. Example: /delete Tamanna")
         return
 
     name = " ".join(ctx.args).strip()
@@ -982,64 +808,36 @@ async def delete_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
         shutil.rmtree(voice_dir, ignore_errors=True)
-        await update.message.reply_text(f"🗑 Voice *{name}* has been deleted.", parse_mode="Markdown")
+        await update.message.reply_text(messages.BOT_VOICE_DELETED.format(name=name))
     else:
-        # Case-insensitive fallback
-        matched = None
-        for item in d.iterdir():
-            if item.is_dir() and item.name.lower() == name.lower():
-                matched = item
-                break
-        if matched:
-            if matched.name.lower() == "my_voice":
-                try:
-                    (d / ".deleted_my_voice").touch()
-                except Exception:
-                    pass
-            shutil.rmtree(matched, ignore_errors=True)
-            await update.message.reply_text(f"🗑 Voice *{matched.name}* has been deleted.", parse_mode="Markdown")
-        else:
-            await update.message.reply_text(
-                f"❌ Voice *{name}* not found. Use `/voices` to see your saved voices.",
-                parse_mode="Markdown",
-            )
+        await update.message.reply_text(messages.BOT_VOICE_NOT_FOUND)
+
+
+async def restart_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await check_auth(update):
+        return
+    await update.message.reply_text("Restarting bot...")
+    os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 def main():
-    print(f"============================================================")
-    print(f"       VoiceCraft Telegram Bot (Audio Controls Enabled)     ")
-    print(f"============================================================")
-    allowed = get_allowed_user_ids()
-    max_w = get_max_words()
-    max_u = get_max_users()
-    print(f"[VoiceCraft Bot] Max Words: {max_w} | Max Users: {max_u}")
-    if allowed:
-        print(f"[VoiceCraft Bot] Whitelist: {allowed}")
-    else:
-        print(f"[VoiceCraft Bot] Open capacity mode (capped at {max_u} users)")
-    print(f"[VoiceCraft Bot] Listening for voice messages and text...")
-
+    print("Starting Telegram Voice Studio Bot...")
     app = Application.builder().token(BOT_TOKEN.strip()).build()
 
-    # Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("voices", voices_cmd))
     app.add_handler(CommandHandler("audios", audios_cmd))
     app.add_handler(CommandHandler("clear_audios", clear_audios_cmd))
-    app.add_handler(CommandHandler("lang", lang_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("delete", delete_cmd))
     app.add_handler(CommandHandler("restart", restart_cmd))
     app.add_handler(CommandHandler("id", id_cmd))
 
-    # Callbacks
     app.add_handler(CallbackQueryHandler(on_voice_select, pattern=r"^voice:"))
     app.add_handler(CallbackQueryHandler(on_del_audio, pattern=r"^del_audio:"))
     app.add_handler(CallbackQueryHandler(on_save_audio, pattern=r"^save_audio:"))
     app.add_handler(CallbackQueryHandler(on_saved_done, pattern=r"^saved_done:"))
-    app.add_handler(CallbackQueryHandler(on_setlang_callback, pattern=r"^setlang:"))
 
-    # Media and Text
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO | filters.VIDEO_NOTE | filters.Document.AUDIO, on_audio))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 

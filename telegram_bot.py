@@ -129,15 +129,30 @@ def get_user_voices(uid: int) -> list[str]:
     """Returns list of voice profile names saved by the user."""
     d = user_dir(uid)
 
-    # Legacy migration: if ref.wav is at root of user_dir, migrate to Default
+    # Automatically load 'my_voice' as the default voice if voices/my_voice.wav exists
+    default_src = BASE_DIR / "voices" / "my_voice.wav"
+    user_my_voice = d / "my_voice"
+    deleted_marker = d / ".deleted_my_voice"
+    if default_src.exists() and not user_my_voice.exists() and not deleted_marker.exists():
+        try:
+            user_my_voice.mkdir(parents=True, exist_ok=True)
+            to_wav(default_src, user_my_voice / "ref.wav", max_seconds=15)
+            try:
+                txt = transcribe(user_my_voice / "ref.wav")
+            except Exception:
+                txt = "Default my_voice sample"
+            (user_my_voice / "ref.txt").write_text(txt or "Default my_voice sample", encoding="utf-8")
+        except Exception as e:
+            print(f"[VoiceCraft Bot] Default my_voice init notice: {e}")
+
+    # Legacy migration: if ref.wav is at root of user_dir, migrate to my_voice
     legacy_ref = d / "ref.wav"
     if legacy_ref.exists():
-        legacy_dir = d / "Default"
-        legacy_dir.mkdir(exist_ok=True)
-        shutil.move(str(legacy_ref), str(legacy_dir / "ref.wav"))
+        user_my_voice.mkdir(exist_ok=True)
+        shutil.move(str(legacy_ref), str(user_my_voice / "ref.wav"))
         legacy_txt = d / "ref.txt"
         if legacy_txt.exists():
-            shutil.move(str(legacy_txt), str(legacy_dir / "ref.txt"))
+            shutil.move(str(legacy_txt), str(user_my_voice / "ref.txt"))
 
     voices = []
     if d.exists():
@@ -437,19 +452,35 @@ async def on_voice_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     text = ctx.user_data.get("pending_text", "")
+    if not text and query.message and query.message.text:
+        msg_text = query.message.text
+        if '💬 Text: "' in msg_text:
+            try:
+                text = msg_text.split('💬 Text: "', 1)[1].split('"\n\n👉', 1)[0].strip()
+            except Exception:
+                pass
+        if not text and "👉 Whose voice should speak this?" in msg_text:
+            text = msg_text.replace("👉 Whose voice should speak this?", "").strip()
+
     if not text:
-        await query.edit_message_text("⚠️ No text found. Please send your text message again.")
+        try:
+            await query.edit_message_text("⚠️ Please send your text message again.")
+        except Exception:
+            pass
         return
 
     global sec_per_char
     estimate = max(5, len(text) * sec_per_char)
     queue_note = "\n⏳ Another job is currently running, you're queued next." if gpu_lock.locked() else ""
 
-    await query.edit_message_text(
-        f"🎙 Generating voice as *{voice_name}*…\n"
-        f"⏱ Estimated time: ~{fmt_time(estimate)}{queue_note}\n{bar(0)}",
-        parse_mode="Markdown",
-    )
+    try:
+        await query.edit_message_text(
+            f"🎙 Generating voice as *{voice_name}*…\n"
+            f"⏱ Estimated time: ~{fmt_time(estimate)}{queue_note}\n{bar(0)}",
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
 
     ref_wav = str(voice_dir / "ref.wav")
     ref_text = (voice_dir / "ref.txt").read_text(encoding="utf-8") if (voice_dir / "ref.txt").exists() else "Reference"
@@ -479,16 +510,22 @@ async def on_voice_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try:
             await job
         except Exception as e:
-            await query.edit_message_text(f"❌ Generation failed: {e}")
+            try:
+                await query.edit_message_text(f"❌ Generation failed: {e}")
+            except Exception:
+                pass
             return
 
         took = time.time() - start_t
         sec_per_char = 0.7 * sec_per_char + 0.3 * (took / max(1, len(text)))
 
-    await query.edit_message_text(
-        f"✅ Spoken as *{voice_name}* in {fmt_time(took)}! {bar(100)}",
-        parse_mode="Markdown",
-    )
+    try:
+        await query.edit_message_text(
+            f"✅ Spoken as *{voice_name}* in {fmt_time(took)}! {bar(100)}",
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
     await query.message.chat.send_action(ChatAction.RECORD_VOICE)
 
     # Convert to OGG/Opus for Telegram voice note
@@ -566,6 +603,11 @@ async def delete_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     voice_dir = d / name
 
     if voice_dir.exists() and voice_dir.is_dir():
+        if name.lower() == "my_voice":
+            try:
+                (d / ".deleted_my_voice").touch()
+            except Exception:
+                pass
         shutil.rmtree(voice_dir, ignore_errors=True)
         await update.message.reply_text(f"🗑 Voice *{name}* has been deleted.", parse_mode="Markdown")
     else:
@@ -576,6 +618,11 @@ async def delete_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 matched = item
                 break
         if matched:
+            if matched.name.lower() == "my_voice":
+                try:
+                    (d / ".deleted_my_voice").touch()
+                except Exception:
+                    pass
             shutil.rmtree(matched, ignore_errors=True)
             await update.message.reply_text(f"🗑 Voice *{matched.name}* has been deleted.", parse_mode="Markdown")
         else:

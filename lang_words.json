@@ -1,0 +1,22 @@
+{
+  "hindi_words": [
+    "sab", "karke", "bahut", "achha", "achhi", "achhe", "kaise", "kese",
+    "kaisa", "kaisi", "lag", "laga", "lage", "lagi", "lagta", "lagti", "lagte",
+    "raha", "rahe", "rahi", "hai", "hain", "ho", "hu", "hoon", "main",
+    "mera", "meri", "mere", "tera", "teri", "tere", "tum", "aap", "hum",
+    "yeh", "woh", "aur", "bhi", "se", "ko", "par", "mein", "kya", "kyun",
+    "kyon", "kab", "kahan", "nahi", "nahin", "theek", "thik", "yaar",
+    "dost", "bhai", "namaste", "shukriya", "dhanyawad", "khayal", "rakhna",
+    "rakho", "raho", "hamesha", "muskurate", "muskuraate", "jaldi", "milte",
+    "baat", "karo", "kare", "karna", "karte", "karti", "mujhe", "tumhe",
+    "aapko", "sabhi", "log", "apna", "apne", "apni", "wala", "wali", "wale"
+  ],
+  "english_words": [
+    "hey", "everyone", "hello", "hi", "connect", "generate", "start", "stop",
+    "voice", "cloning", "project", "audio", "video", "call", "message",
+    "thank", "you", "thanks", "please", "okay", "ok", "yes", "no", "sure",
+    "happy", "busy", "online", "offline", "meeting", "class", "office",
+    "computer", "mobile", "phone", "internet", "link", "download", "upload",
+    "studio", "button", "play", "pause", "resume", "settings", "batch"
+  ]
+}

@@ -307,7 +307,12 @@ def voicecraft_generate(ref_wav: str, ref_text: str, text: str, out_wav: str, la
         pass
 
     # 2. Standalone fallback
+    import hinglish_pipeline
     model = get_tts_model()
+    if lang == "mixed" or hinglish_pipeline.is_hinglish(text):
+        hinglish_pipeline.generate_mixed(text, ref_wav, out_wav, model=model)
+        return
+
     model.prepare_conditionals(ref_wav, exaggeration=0.5)
 
     from multilingual_app import split_text_into_chunks, join_audio_chunks
@@ -460,16 +465,25 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     # Auto-detect text type and transliterate Roman Hindi / Hinglish to Devanagari
+    import hinglish_pipeline
+    is_mixed = hinglish_pipeline.is_hinglish(text)
     text_type = voice_style.detect_text_type(text)
     clean_text, style = voice_style.clean_text_for_tts(text)
 
-    if text_type in ("roman_hindi", "hinglish"):
+    if is_mixed:
+        target_lang = "mixed"
+    elif text_type in ("roman_hindi", "hinglish"):
         clean_text = voice_style.transliterate_to_devanagari(clean_text)
+        target_lang = "hi"
+    elif text_type == "devanagari":
+        target_lang = "hi"
+    else:
+        target_lang = "en"
 
     # Store in context
     ctx.user_data["pending_text"] = clean_text
     ctx.user_data["detected_style"] = style
-    ctx.user_data["target_lang"] = "hi" if text_type in ("devanagari", "roman_hindi", "hinglish") else "en"
+    ctx.user_data["target_lang"] = target_lang
 
     # Present voices in clean rows (maximum 3 buttons per row)
     keyboard = []

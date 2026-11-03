@@ -364,20 +364,36 @@ async def generate_speech_endpoint(req: GenerateRequest):
     CURRENT_GENERATION_ID = gen_id
     CANCEL_REQUESTED = False
 
-    # Auto-detect text type and transliterate Roman Hindi / Hinglish to Devanagari
+    # Auto-detect text type and language segmentation
+    import hinglish_pipeline
+    is_mixed = hinglish_pipeline.is_hinglish(req.text)
     text_type = voice_style.detect_text_type(req.text)
     clean_text, detected_mood = voice_style.clean_text_for_tts(req.text)
     effective_style = req.style if (req.style and req.style != "natural") else detected_mood
 
-    if text_type in ("roman_hindi", "hinglish"):
+    if is_mixed:
+        segs = hinglish_pipeline.split_languages(req.text)
+        chunks_meta = []
+        for s in segs:
+            c_text = hinglish_pipeline.prepare_text(s["text"], s["lang"])
+            has_end = any(s["text"].strip().endswith(p) for p in (".", "!", "?", "।", "\n", "..."))
+            chunks_meta.append({"text": s["text"], "clean_text": c_text, "lang": s["lang"], "has_pause": has_end})
+        chunks = [c["clean_text"] for c in chunks_meta]
+        language_id = "mixed"
+    elif text_type in ("roman_hindi", "hinglish"):
         clean_text = voice_style.transliterate_to_devanagari(clean_text)
         language_id = "hi"
+        chunks = split_text_into_chunks(clean_text, max_chars=250)
+        chunks_meta = [{"clean_text": c, "lang": "hi", "has_pause": True} for c in chunks]
     elif text_type == "devanagari":
         language_id = "hi"
+        chunks = split_text_into_chunks(clean_text, max_chars=250)
+        chunks_meta = [{"clean_text": c, "lang": "hi", "has_pause": True} for c in chunks]
     else:
         language_id = req.language or "en"
+        chunks = split_text_into_chunks(clean_text, max_chars=250)
+        chunks_meta = [{"clean_text": c, "lang": language_id, "has_pause": True} for c in chunks]
 
-    chunks = split_text_into_chunks(clean_text, max_chars=250)
     if not chunks:
         raise HTTPException(status_code=400, detail="No valid sentences found in input.")
 
@@ -413,16 +429,18 @@ async def generate_speech_endpoint(req: GenerateRequest):
                             yield f"event: cancelled\ndata: {json.dumps({'status': 'cancelled', 'saved_partial': False})}\n\n"
                         return
 
-                    # Synthesize chunk
+                    # Synthesize chunk with matching language setting
+                    seg_lang = chunks_meta[idx]["lang"]
                     wav = model.generate(
                         chunk_text,
-                        language_id=language_id,
+                        language_id=seg_lang,
                         audio_prompt_path=None,
                         exaggeration=float(req.exaggeration),
                         cfg_weight=float(req.cfg_weight),
                         temperature=float(req.temperature),
                     )
                     chunk_np = wav.squeeze(0).cpu().numpy().astype(np.float32)
+                    chunk_np = hinglish_pipeline.match_loudness(chunk_np)
                     chunks_in_memory.append(chunk_np)
 
                     # Encode chunk to base64 WAV in memory for streaming playback
@@ -433,6 +451,7 @@ async def generate_speech_endpoint(req: GenerateRequest):
                         "chunk_index": idx,
                         "total_chunks": len(chunks),
                         "text": chunk_text,
+                        "lang": seg_lang,
                         "audio_b64": b64_url,
                         "elapsed_s": elapsed,
                     }
@@ -445,12 +464,21 @@ async def generate_speech_endpoint(req: GenerateRequest):
                 return
 
             # All chunks finished: Stitch into ONE continuous audio file
-            final_audio = join_audio_chunks(
-                chunks_in_memory,
-                sr,
-                pause_ms=req.pause_ms,
-                crossfade_ms=req.crossfade_ms,
-            )
+            if is_mixed:
+                final_audio = np.zeros(0, dtype=np.float32)
+                for i, part in enumerate(chunks_in_memory):
+                    has_pause = chunks_meta[i].get("has_pause", False)
+                    p_ms = req.pause_ms if has_pause else 0
+                    final_audio = hinglish_pipeline.crossfade_join(
+                        final_audio, part, sr, crossfade_ms=req.crossfade_ms, pause_ms=p_ms
+                    )
+            else:
+                final_audio = join_audio_chunks(
+                    chunks_in_memory,
+                    sr,
+                    pause_ms=req.pause_ms,
+                    crossfade_ms=req.crossfade_ms,
+                )
 
             # Save EXACTLY ONE file: .\outputs\<timestamp>.wav
             output_filename = f"{gen_id}.wav"

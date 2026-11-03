@@ -14,7 +14,7 @@ DEFAULT_CONFIG = {
         "target_sample_rate": 24000,
     },
     "generation": {
-        "default_language": "en",
+        "default_language": "hi",
         "exaggeration": 0.5,
         "cfg_weight": 0.5,
         "temperature": 0.8,

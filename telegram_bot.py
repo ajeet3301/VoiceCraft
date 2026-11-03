@@ -126,6 +126,26 @@ def get_active_user_ids() -> set[int]:
     return uids
 
 
+def get_user_lang(uid: int) -> str:
+    lang_file = user_dir(uid) / ".lang"
+    if lang_file.exists():
+        try:
+            val = lang_file.read_text(encoding="utf-8").strip()
+            if val:
+                return val
+        except Exception:
+            pass
+    return os.getenv("TELEGRAM_DEFAULT_LANG", "hi").strip() or "hi"
+
+
+def set_user_lang(uid: int, lang_code: str):
+    lang_file = user_dir(uid) / ".lang"
+    try:
+        lang_file.write_text(lang_code.strip().lower(), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def is_authorized(uid: int) -> bool:
     """Checks if the user ID is permitted under current whitelist & user capacity limits."""
     allowed = get_allowed_user_ids()
@@ -296,7 +316,7 @@ def get_tts_model():
     return _tts_model
 
 
-def voicecraft_generate(ref_wav: str, ref_text: str, text: str, out_wav: str):
+def voicecraft_generate(ref_wav: str, ref_text: str, text: str, out_wav: str, lang: str = "hi"):
     """
     Connected VoiceCraft inference engine.
     - If local VoiceCraft server is active (port 7860), reuses warm model via HTTP.
@@ -307,7 +327,8 @@ def voicecraft_generate(ref_wav: str, ref_text: str, text: str, out_wav: str):
     import urllib.request
     import json
 
-    lang = "hi" if any("\u0900" <= ch <= "\u097f" for ch in text) else os.getenv("TELEGRAM_DEFAULT_LANG", "en")
+    if not lang:
+        lang = "hi" if any("\u0900" <= ch <= "\u097f" for ch in text) else os.getenv("TELEGRAM_DEFAULT_LANG", "hi")
     server_port = os.getenv("SERVER_PORT", "7860")
     server_host = os.getenv("SERVER_HOST", "127.0.0.1")
     server_url = f"http://{server_host}:{server_port}"
@@ -388,6 +409,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "Commands:\n"
         "• `/voices` – List all saved voice profiles\n"
         "• `/audios` – View and manage recent generated audios\n"
+        "• `/lang` – View or switch speech language (Default: Hindi)\n"
         "• `/delete <name>` – Delete a saved voice profile\n"
         "• `/clear_audios` – Clear cached audio files\n"
         "• `/status` – View system status and config\n"
@@ -409,12 +431,15 @@ async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     max_w = get_max_words()
     max_u = get_max_users()
+    cur_lang = get_user_lang(uid)
+    flag = "🇮🇳" if cur_lang == "hi" else ("🇬🇧" if cur_lang == "en" else "🌐")
     active_u = get_active_user_ids()
     voices = get_user_voices(uid)
     audios = list(user_audios_dir(uid).glob("*.wav"))
 
     await update.message.reply_text(
         "📊 *VoiceCraft Bot Status*\n\n"
+        f"• *Default Language:* {flag} `{cur_lang.upper()}` (change via `/lang`)\n"
         f"• *Max Words Per Request:* `{max_w}` words\n"
         f"• *Max Allowed Users:* `{max_u if max_u>0 else 'Unlimited'}` (Currently active: `{len(active_u)}`)\n"
         f"• *Your Saved Voices:* `{len(voices)}`\n"
@@ -612,10 +637,14 @@ async def on_voice_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ref_wav = str(voice_dir / "ref.wav")
     ref_text = (voice_dir / "ref.txt").read_text(encoding="utf-8") if (voice_dir / "ref.txt").exists() else "Reference"
 
+    user_lang = get_user_lang(uid)
+    if any("\u0900" <= ch <= "\u097f" for ch in text):
+        user_lang = "hi"
+
     async with gpu_lock:
         start_t = time.time()
         job = asyncio.create_task(
-            asyncio.to_thread(voicecraft_generate, ref_wav, ref_text, text, str(out_wav))
+            asyncio.to_thread(voicecraft_generate, ref_wav, ref_text, text, str(out_wav), user_lang)
         )
 
         last = -1
@@ -864,6 +893,46 @@ async def restart_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
+async def lang_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """View or switch speech synthesis language (default Hindi)."""
+    if not await check_auth(update):
+        return
+
+    uid = update.effective_user.id
+    current_lang = get_user_lang(uid)
+
+    if ctx.args:
+        new_lang = ctx.args[0].lower().strip()
+        set_user_lang(uid, new_lang)
+        flag = "🇮🇳" if new_lang == "hi" else ("🇬🇧" if new_lang == "en" else "🌐")
+        await update.message.reply_text(f"✅ Default speech language set to *{flag} {new_lang.upper()}*!", parse_mode="Markdown")
+        return
+
+    markup = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🇮🇳 Hindi (hi)" + (" ✓" if current_lang == "hi" else ""), callback_data="setlang:hi"),
+            InlineKeyboardButton("🇬🇧 English (en)" + (" ✓" if current_lang == "en" else ""), callback_data="setlang:en"),
+        ]
+    ])
+    flag = "🇮🇳" if current_lang == "hi" else ("🇬🇧" if current_lang == "en" else "🌐")
+    await update.message.reply_text(
+        f"🌐 *Default Speech Language: {flag} {current_lang.upper()}*\n\n"
+        f"Tap below to switch or use `/lang <code>` (e.g. `/lang hi`):",
+        reply_markup=markup,
+        parse_mode="Markdown",
+    )
+
+
+async def on_setlang_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    code = query.data.split("setlang:", 1)[1]
+    set_user_lang(uid, code)
+    flag = "🇮🇳" if code == "hi" else ("🇬🇧" if code == "en" else "🌐")
+    await query.edit_message_text(f"✅ Default speech language updated to *{flag} {code.upper()}*!", parse_mode="Markdown")
+
+
 async def voices_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Lists all voices saved by the user."""
     if not await check_auth(update):
@@ -957,6 +1026,7 @@ def main():
     app.add_handler(CommandHandler("voices", voices_cmd))
     app.add_handler(CommandHandler("audios", audios_cmd))
     app.add_handler(CommandHandler("clear_audios", clear_audios_cmd))
+    app.add_handler(CommandHandler("lang", lang_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("delete", delete_cmd))
     app.add_handler(CommandHandler("restart", restart_cmd))
@@ -967,6 +1037,7 @@ def main():
     app.add_handler(CallbackQueryHandler(on_del_audio, pattern=r"^del_audio:"))
     app.add_handler(CallbackQueryHandler(on_save_audio, pattern=r"^save_audio:"))
     app.add_handler(CallbackQueryHandler(on_saved_done, pattern=r"^saved_done:"))
+    app.add_handler(CallbackQueryHandler(on_setlang_callback, pattern=r"^setlang:"))
 
     # Media and Text
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO | filters.VIDEO_NOTE | filters.Document.AUDIO, on_audio))

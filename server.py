@@ -75,7 +75,7 @@ CANCEL_REQUESTED = False
 class GenerateRequest(BaseModel):
     text: str
     voice_path: str | None = None
-    language: str = "en"
+    language: str = "hi"
     exaggeration: float = 0.5
     cfg_weight: float = 0.5
     temperature: float = 0.8
@@ -93,7 +93,7 @@ class BatchItem(BaseModel):
 
 class BatchGenerateRequest(BaseModel):
     items: list[BatchItem]
-    language: str = "en"
+    language: str = "hi"
     exaggeration: float = 0.5
     cfg_weight: float = 0.5
     temperature: float = 0.8
@@ -520,11 +520,11 @@ async def get_languages():
         "id": "🇮🇩", "vi": "🇻🇳", "uk": "🇺🇦",
     }
     langs = []
-    # English first, then Hindi, then rest alphabetically
-    for code, name in sorted(SUPPORTED_LANGUAGES.items(), key=lambda x: (x[0] != "en", x[0] != "hi", x[1])):
+    # Hindi first, then English, then rest alphabetically
+    for code, name in sorted(SUPPORTED_LANGUAGES.items(), key=lambda x: (x[0] != "hi", x[0] != "en", x[1])):
         flag = flags.get(code, "🌐")
         langs.append({"code": code, "name": name, "flag": flag, "label": f"{flag} {name} ({code})"})
-    return {"languages": langs}
+    return {"languages": langs, "default": "hi"}
 
 
 @app.get("/api/telegram/status")

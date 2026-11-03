@@ -6,7 +6,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- Global State ---
   const state = {
     theme: localStorage.getItem("voicecraft_theme") || "dark",
-    language: localStorage.getItem("voicecraft_language") || "en",
+    language: localStorage.getItem("voicecraft_language") || "hi",
     hasVoice: false,
     isGenerating: false,
     activeAudioQueue: [],
@@ -208,17 +208,20 @@ document.addEventListener("DOMContentLoaded", () => {
       languageSelect.innerHTML = "";
       batchLangSelect.innerHTML = "";
 
+      const defaultLang = localStorage.getItem("voicecraft_language") || data.default || "hi";
+      state.language = defaultLang;
+
       data.languages.forEach(lang => {
         const opt1 = document.createElement("option");
         opt1.value = lang.code;
         opt1.textContent = lang.label;
-        if (lang.code === state.language) opt1.selected = true;
+        if (lang.code === defaultLang) opt1.selected = true;
         languageSelect.appendChild(opt1);
 
         const opt2 = document.createElement("option");
         opt2.value = lang.code;
         opt2.textContent = lang.label;
-        if (lang.code === state.language) opt2.selected = true;
+        if (lang.code === defaultLang) opt2.selected = true;
         batchLangSelect.appendChild(opt2);
       });
     } catch (e) {

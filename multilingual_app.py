@@ -444,7 +444,7 @@ custom_css = """
 }
 """
 
-with gr.Blocks(title="VoiceCraft - Multilingual Voice Cloning Studio", css=custom_css, theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title="VoiceCraft - Multilingual Voice Cloning Studio") as demo:
     with gr.Column(elem_classes=["main-header"]):
         gr.Markdown(
             """
@@ -673,4 +673,4 @@ with gr.Blocks(title="VoiceCraft - Multilingual Voice Cloning Studio", css=custo
 if __name__ == "__main__":
     host = os.getenv("SERVER_HOST", "127.0.0.1")
     port = int(os.getenv("SERVER_PORT", "7860"))
-    demo.launch(server_name=host, server_port=port, show_error=True)
+    demo.launch(server_name=host, server_port=port, theme=gr.themes.Soft(), css=custom_css, show_error=True)

@@ -126,12 +126,15 @@ document.addEventListener("DOMContentLoaded", () => {
   const cfgPort = document.getElementById("cfg-port");
   const cfgToken = document.getElementById("cfg-token");
   const cfgAllowedIds = document.getElementById("cfg-allowed-ids");
+  const cfgMaxWords = document.getElementById("cfg-max-words");
+  const cfgMaxUsers = document.getElementById("cfg-max-users");
   const tokenEyeBtn = document.getElementById("token-eye-btn");
   const saveEnvBtn = document.getElementById("save-env-btn");
   const saveEnvStatus = document.getElementById("save-env-status");
   const tgStatusText = document.getElementById("tg-status-text");
   const tgStatusDot = document.getElementById("tg-status-dot");
   const startTgBtn = document.getElementById("start-tg-btn");
+  const restartTgBtn = document.getElementById("restart-tg-btn");
   const stopTgBtn = document.getElementById("stop-tg-btn");
   const refreshTgBtn = document.getElementById("refresh-tg-btn");
 
@@ -937,6 +940,21 @@ document.addEventListener("DOMContentLoaded", () => {
     tokenEyeBtn.textContent = cfgToken.type === "password" ? "👁️" : "🙈";
   });
 
+  async function loadTelegramSettings() {
+    try {
+      const res = await fetch("/api/telegram/settings");
+      if (res.ok) {
+        const data = await res.json();
+        if (cfgHost && data.host) cfgHost.value = data.host;
+        if (cfgPort && data.port) cfgPort.value = data.port;
+        if (cfgToken && data.token) cfgToken.value = data.token;
+        if (cfgAllowedIds && data.allowed_ids !== undefined) cfgAllowedIds.value = data.allowed_ids;
+        if (cfgMaxWords && data.max_words) cfgMaxWords.value = data.max_words;
+        if (cfgMaxUsers && data.max_users !== undefined) cfgMaxUsers.value = data.max_users;
+      }
+    } catch (e) {}
+  }
+
   saveEnvBtn.addEventListener("click", async () => {
     saveEnvBtn.disabled = true;
     saveEnvBtn.textContent = "Saving...";
@@ -945,10 +963,12 @@ document.addEventListener("DOMContentLoaded", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          host: cfgHost.value,
-          port: cfgPort.value,
-          token: cfgToken.value,
-          allowed_ids: cfgAllowedIds.value
+          host: cfgHost ? cfgHost.value : "127.0.0.1",
+          port: cfgPort ? cfgPort.value : "7860",
+          token: cfgToken ? cfgToken.value : "",
+          allowed_ids: cfgAllowedIds ? cfgAllowedIds.value : "",
+          max_words: cfgMaxWords ? parseInt(cfgMaxWords.value) || 60 : 60,
+          max_users: cfgMaxUsers ? parseInt(cfgMaxUsers.value) || 1 : 1
         })
       });
       saveEnvStatus.textContent = "✅ Settings saved safely to .env (Private & Ignored by Git)";
@@ -985,6 +1005,20 @@ document.addEventListener("DOMContentLoaded", () => {
       startTgBtn.disabled = false;
     }
   });
+
+  if (restartTgBtn) {
+    restartTgBtn.addEventListener("click", async () => {
+      restartTgBtn.disabled = true;
+      restartTgBtn.textContent = "Restarting...";
+      try {
+        await fetch("/api/telegram/restart", { method: "POST" });
+        setTimeout(checkTelegramStatus, 2000);
+      } finally {
+        restartTgBtn.disabled = false;
+        restartTgBtn.textContent = "🔄 Restart Bot";
+      }
+    });
+  }
 
   stopTgBtn.addEventListener("click", async () => {
     stopTgBtn.disabled = true;
@@ -1028,5 +1062,6 @@ document.addEventListener("DOMContentLoaded", () => {
   checkInitialVoice();
   loadHistoryCount();
   checkTelegramStatus();
+  loadTelegramSettings();
   handleHash();
 });

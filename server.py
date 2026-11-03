@@ -547,6 +547,58 @@ async def telegram_stop():
     return {"status": "ok", "message": msg}
 
 
+class TelegramSettingsRequest(BaseModel):
+    host: str = "127.0.0.1"
+    port: str = "7860"
+    token: str = ""
+    allowed_ids: str = ""
+    max_words: int = 60
+    max_users: int = 1
+
+
+@app.get("/api/telegram/settings")
+async def get_tg_settings():
+    load_dotenv(ENV_PATH, override=True)
+    return {
+        "host": os.getenv("SERVER_HOST", "127.0.0.1"),
+        "port": os.getenv("SERVER_PORT", "7860"),
+        "token": os.getenv("TELEGRAM_BOT_TOKEN", ""),
+        "allowed_ids": os.getenv("ALLOWED_TELEGRAM_USER_IDS", "8011886933"),
+        "max_words": int(os.getenv("TELEGRAM_MAX_WORDS", "60")),
+        "max_users": int(os.getenv("TELEGRAM_MAX_USERS", "1")),
+    }
+
+
+@app.post("/api/telegram/save")
+async def save_tg_settings(req: TelegramSettingsRequest):
+    try:
+        from dotenv import set_key
+        ENV_PATH.touch(exist_ok=True)
+        set_key(str(ENV_PATH), "SERVER_HOST", req.host.strip() or "127.0.0.1")
+        set_key(str(ENV_PATH), "SERVER_PORT", req.port.strip() or "7860")
+        if req.token:
+            set_key(str(ENV_PATH), "TELEGRAM_BOT_TOKEN", req.token.strip())
+            set_key(str(ENV_PATH), "BOT_TOKEN", req.token.strip())
+        set_key(str(ENV_PATH), "ALLOWED_TELEGRAM_USER_IDS", req.allowed_ids.strip())
+        set_key(str(ENV_PATH), "TELEGRAM_MAX_WORDS", str(req.max_words))
+        set_key(str(ENV_PATH), "TELEGRAM_MAX_USERS", str(req.max_users))
+        load_dotenv(ENV_PATH, override=True)
+        return {"status": "ok", "message": "Settings saved to .env"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/telegram/restart")
+async def telegram_restart():
+    try:
+        stop_telegram_bot()
+        await asyncio.sleep(1)
+        msg = start_telegram_bot()
+        return {"status": "ok", "message": f"Bot restarted! {msg}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Serve static assets
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 

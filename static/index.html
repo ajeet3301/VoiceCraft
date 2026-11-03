@@ -450,7 +450,19 @@
           <div class="form-group">
             <label for="cfg-allowed-ids">Authorized Telegram User IDs</label>
             <input type="text" id="cfg-allowed-ids" class="form-input" value="8011886933" placeholder="e.g. 8011886933">
-            <span class="slider-tip">Restricts bot access exclusively to your account.</span>
+            <span class="slider-tip">Restricts bot access exclusively to your account (comma-separated).</span>
+          </div>
+
+          <div class="form-group">
+            <label for="cfg-max-words">Max Words Per Request</label>
+            <input type="number" id="cfg-max-words" class="form-input" value="60" min="5" max="500">
+            <span class="slider-tip">Maximum word count allowed per text message on Telegram.</span>
+          </div>
+
+          <div class="form-group">
+            <label for="cfg-max-users">Max Allowed Users</label>
+            <input type="number" id="cfg-max-users" class="form-input" value="1" min="0" max="100">
+            <span class="slider-tip">Maximum unique users permitted to use the bot (0 = unlimited).</span>
           </div>
 
           <button class="btn btn-primary" id="save-env-btn">💾 Save Settings</button>
@@ -469,8 +481,9 @@
 
           <div class="btn-group" style="margin-top:16px;">
             <button class="btn btn-primary" id="start-tg-btn">🚀 Start Bot</button>
+            <button class="btn btn-warning" id="restart-tg-btn" style="background:#eab308; color:#000;">🔄 Restart Bot</button>
             <button class="btn btn-danger" id="stop-tg-btn">🛑 Stop Bot</button>
-            <button class="btn btn-secondary" id="refresh-tg-btn">🔄 Refresh</button>
+            <button class="btn btn-secondary" id="refresh-tg-btn">Status</button>
           </div>
 
           <div class="tg-guide-box">

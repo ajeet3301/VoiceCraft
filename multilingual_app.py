@@ -642,7 +642,8 @@ def start_telegram_bot(token_input: str | None = None):
     if not bot_script.exists():
         raise gr.Error("telegram_bot.py not found in the project root.")
 
-    python_exe = sys.executable
+    venv_py = BASE_DIR / ".venv" / "Scripts" / "python.exe"
+    python_exe = str(venv_py) if venv_py.exists() else sys.executable
 
     try:
         env = os.environ.copy()
@@ -665,21 +666,28 @@ def start_telegram_bot(token_input: str | None = None):
 def stop_telegram_bot():
     """Stops the Telegram bot background subprocess."""
     global BOT_PROCESS
-    if BOT_PROCESS is None or BOT_PROCESS.poll() is not None:
-        BOT_PROCESS = None
-        return "⚪ Telegram Bot is already stopped."
-
-    try:
-        BOT_PROCESS.terminate()
+    if BOT_PROCESS is not None:
         try:
-            BOT_PROCESS.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            BOT_PROCESS.kill()
+            BOT_PROCESS.terminate()
+            try:
+                BOT_PROCESS.wait(timeout=2)
+            except Exception:
+                BOT_PROCESS.kill()
+        except Exception:
+            pass
         BOT_PROCESS = None
-        return "⚪ **Telegram Bot stopped successfully.**"
-    except Exception as e:
-        BOT_PROCESS = None
-        return f"Error stopping bot: {e}"
+
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%telegram_bot.py%'\" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
+                capture_output=True,
+                timeout=5
+            )
+        except Exception:
+            pass
+
+    return "⚪ **Telegram Bot stopped successfully.**"
 
 
 # --- Language Dropdown Configuration ---

@@ -5,10 +5,16 @@
 // ============================================================
 
 const MESSAGES = {
-  // Page header
+  // Page header & navigation
   title: "Voice Studio",
   subtitle: "Choose a voice, then write what it should say.",
   themeToggle: "Theme",
+  tabs: {
+    studio: "Studio",
+    batch: "Batch clips",
+    history: "History",
+    settings: "Settings & bot"
+  },
 
   // Voices section
   voicesTitle: "Voices",
@@ -74,6 +80,43 @@ const MESSAGES = {
   noHistory: "No recent recordings.",
   loadingHistory: "Loading recent recordings...",
 
+  // Batch clips
+  batchTitle: "Batch generation",
+  batchDesc: "Generate multiple audio clips in sequence using the selected voice.",
+  batchAddClip: "Add clip",
+  batchPasteLines: "Paste multiple lines",
+  batchGenerateBtn: "Generate all clips",
+  batchStopBtn: "Stop batch",
+  batchDownloadZip: "Download all as ZIP",
+  batchEmpty: "No clips added. Click 'Add clip' or 'Paste multiple lines' to start.",
+  batchPastePrompt: "Paste your text below. Each separate line will become one audio clip:",
+
+  // Settings & Telegram Bot
+  settingsTitle: "Studio settings",
+  settingsDesc: "Configure bot parameters and local server settings.",
+  hostLabel: "Server host",
+  portLabel: "Server port",
+  tokenLabel: "Telegram bot token",
+  tokenHint: "Provided by @BotFather. Stored locally in .env.",
+  allowedUsersLabel: "Authorized Telegram user IDs",
+  allowedUsersHint: "Comma-separated Telegram user IDs allowed to use the bot.",
+  maxWordsLabel: "Maximum words per request",
+  maxWordsHint: "Limits the length of text accepted by the bot in a single message.",
+  maxUsersLabel: "Maximum allowed users",
+  maxUsersHint: "Maximum number of users allowed to access the bot (0 = unlimited).",
+  saveSettingsBtn: "Save settings",
+  savingSettingsBtn: "Saving...",
+  settingsSavedNotice: "Settings saved successfully to .env.",
+  settingsError: "Could not save settings. Please try again.",
+
+  botControllerTitle: "Telegram bot controller",
+  botStatusLabel: "Status:",
+  startBotBtn: "Start bot",
+  restartBotBtn: "Restart bot",
+  stopBotBtn: "Stop bot",
+  refreshStatusBtn: "Check status",
+  botLinkText: "Open Telegram bot: @VoiceCraftBitchsBot",
+
   // Error messages
   errorGeneric: "Unable to complete generation. Please try again in a moment.",
   errorConnection: "Could not connect to the server. Please check that the server is running.",
@@ -84,5 +127,4 @@ const MESSAGES = {
   footer: "Voice Studio"
 };
 
-// Expose globally
 window.MESSAGES = MESSAGES;

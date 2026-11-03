@@ -1,6 +1,7 @@
 /* ============================================================
-   Voice Studio - Minimal Client Application
+   Voice Studio - Complete Client Application
    Calm, quiet, and responsive behavior.
+   Full support for Studio, Batch Clips, History, Settings & Bot.
    Connects to messages.js for all user-facing wording.
    ============================================================ */
 
@@ -10,6 +11,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- State ---
   const state = {
     theme: localStorage.getItem("voice_studio_theme") || "light",
+    activeTab: "tab-studio",
     voices: [],
     selectedVoice: null,
     selectedStyle: "natural",
@@ -18,10 +20,20 @@ document.addEventListener("DOMContentLoaded", () => {
     recordedChunks: [],
     audioBlob: null,
     activeController: null,
+    batchItems: [
+      { id: "1", text: "Welcome to Voice Studio. Natural voice synthesis made simple." },
+      { id: "2", text: "Each sentence is synthesized directly in memory with seamless transitions." }
+    ],
+    isBatchGenerating: false,
+    batchController: null
   };
 
-  // --- Element References ---
+  // --- Header & Navigation Elements ---
   const themeToggle = document.getElementById("theme-toggle");
+  const navTabs = document.querySelectorAll(".nav-tab");
+  const tabPanes = document.querySelectorAll(".tab-pane");
+
+  // --- Studio Elements ---
   const voicesListContainer = document.getElementById("voices-list");
   const addVoiceToggleBtn = document.getElementById("add-voice-toggle-btn");
   const addVoicePanel = document.getElementById("add-voice-panel");
@@ -52,8 +64,35 @@ document.addEventListener("DOMContentLoaded", () => {
   const downloadResultLink = document.getElementById("download-result-link");
   const regenerateBtn = document.getElementById("regenerate-btn");
 
+  // --- Batch Elements ---
+  const batchItemsContainer = document.getElementById("batch-items-container");
+  const batchAddBtn = document.getElementById("batch-add-btn");
+  const batchPasteLinesBtn = document.getElementById("batch-paste-lines-btn");
+  const batchGenerateBtn = document.getElementById("batch-generate-btn");
+  const batchStopBtn = document.getElementById("batch-stop-btn");
+  const batchDownloadZip = document.getElementById("batch-download-zip");
+  const batchStatusMsg = document.getElementById("batch-status-msg");
+
+  // --- History Elements ---
   const historyContainer = document.getElementById("history-container");
   const refreshHistoryBtn = document.getElementById("refresh-history-btn");
+
+  // --- Settings & Telegram Elements ---
+  const cfgHost = document.getElementById("cfg-host");
+  const cfgPort = document.getElementById("cfg-port");
+  const cfgToken = document.getElementById("cfg-token");
+  const tokenEyeBtn = document.getElementById("token-eye-btn");
+  const cfgAllowedIds = document.getElementById("cfg-allowed-ids");
+  const cfgMaxWords = document.getElementById("cfg-max-words");
+  const cfgMaxUsers = document.getElementById("cfg-max-users");
+  const saveEnvBtn = document.getElementById("save-env-btn");
+  const saveEnvStatus = document.getElementById("save-env-status");
+
+  const tgStatusText = document.getElementById("tg-status-text");
+  const startTgBtn = document.getElementById("start-tg-btn");
+  const restartTgBtn = document.getElementById("restart-tg-btn");
+  const stopTgBtn = document.getElementById("stop-tg-btn");
+  const refreshTgBtn = document.getElementById("refresh-tg-btn");
 
   // ============================================================
   // 1. Theme Management
@@ -72,7 +111,42 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ============================================================
-  // 2. Load & Render Saved Voices
+  // 2. Tab Navigation
+  // ============================================================
+  navTabs.forEach(tab => {
+    tab.addEventListener("click", () => {
+      const targetId = tab.getAttribute("data-tab");
+      navTabs.forEach(t => {
+        t.classList.remove("active");
+        t.setAttribute("aria-selected", "false");
+      });
+      tabPanes.forEach(pane => {
+        pane.style.display = "none";
+        pane.classList.remove("active");
+      });
+
+      tab.classList.add("active");
+      tab.setAttribute("aria-selected", "true");
+      const activePane = document.getElementById(targetId);
+      if (activePane) {
+        activePane.style.display = "block";
+        activePane.classList.add("active");
+      }
+      state.activeTab = targetId;
+
+      if (targetId === "tab-history") {
+        loadHistory();
+      } else if (targetId === "tab-settings") {
+        loadTelegramSettings();
+        checkTelegramStatus();
+      } else if (targetId === "tab-batch") {
+        renderBatchItems();
+      }
+    });
+  });
+
+  // ============================================================
+  // 3. Load & Render Saved Voices
   // ============================================================
   async function loadVoices() {
     try {
@@ -153,7 +227,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ============================================================
-  // 3. Add Voice Panel & Audio Recording
+  // 4. Add Voice Panel & Audio Recording
   // ============================================================
   addVoiceToggleBtn.addEventListener("click", () => {
     const isVisible = addVoicePanel.style.display !== "none";
@@ -188,7 +262,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Microphone recording
   micRecordBtn.addEventListener("click", async () => {
     if (state.mediaRecorder && state.mediaRecorder.state === "recording") {
       state.mediaRecorder.stop();
@@ -276,7 +349,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ============================================================
-  // 4. Text Input & Language Detection
+  // 5. Studio Text Input & Language Detection
   // ============================================================
   let detectTimeout = null;
   textInput.addEventListener("input", () => {
@@ -307,9 +380,6 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch {}
   }
 
-  // ============================================================
-  // 5. Speaking Style Selection
-  // ============================================================
   stylePills.forEach(pill => {
     pill.addEventListener("click", () => {
       stylePills.forEach(p => {
@@ -416,7 +486,6 @@ document.addEventListener("DOMContentLoaded", () => {
             progressBarFill.style.width = "100%";
             progressStatusText.textContent = M.generatingReady || "Ready.";
 
-            // Show Result
             resultSection.style.display = "block";
             resultAudioPlayer.src = data.audio_url;
             downloadResultLink.href = data.audio_url;
@@ -456,7 +525,180 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // ============================================================
-  // 7. Recent Generation History
+  // 7. Batch Clips Manager
+  // ============================================================
+  function renderBatchItems() {
+    if (!batchItemsContainer) return;
+    batchItemsContainer.innerHTML = "";
+
+    if (state.batchItems.length === 0) {
+      batchItemsContainer.innerHTML = `<div class="quiet-text">${M.batchEmpty || "No clips added."}</div>`;
+      return;
+    }
+
+    state.batchItems.forEach((item, index) => {
+      const card = document.createElement("div");
+      card.className = "batch-card-item";
+      card.id = `batch-card-${item.id}`;
+      card.innerHTML = `
+        <div class="batch-card-header">
+          <span>Clip ${index + 1}</span>
+          <button class="text-link danger-link remove-batch-item-btn" data-id="${item.id}" type="button">Remove</button>
+        </div>
+        <textarea class="textarea batch-item-text" data-id="${item.id}" rows="2" placeholder="Text for this clip...">${item.text}</textarea>
+        <div class="batch-player-box" id="batch-player-${item.id}" style="display: none; margin-top: 6px;">
+          <audio controls style="width: 100%; height: 32px;"></audio>
+        </div>
+      `;
+      batchItemsContainer.appendChild(card);
+    });
+
+    document.querySelectorAll(".remove-batch-item-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-id");
+        state.batchItems = state.batchItems.filter(i => i.id !== id);
+        renderBatchItems();
+      });
+    });
+
+    document.querySelectorAll(".batch-item-text").forEach(txt => {
+      txt.addEventListener("input", () => {
+        const id = txt.getAttribute("data-id");
+        const found = state.batchItems.find(i => i.id === id);
+        if (found) found.text = txt.value;
+      });
+    });
+  }
+
+  if (batchAddBtn) {
+    batchAddBtn.addEventListener("click", () => {
+      const nextId = String(Date.now());
+      state.batchItems.push({ id: nextId, text: "" });
+      renderBatchItems();
+    });
+  }
+
+  if (batchPasteLinesBtn) {
+    batchPasteLinesBtn.addEventListener("click", () => {
+      const promptText = M.batchPastePrompt || "Paste your text below (one clip per line):";
+      const linesStr = prompt(promptText);
+      if (!linesStr) return;
+      const lines = linesStr.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+      if (lines.length === 0) return;
+
+      state.batchItems = lines.map((text, idx) => ({ id: String(Date.now() + idx), text }));
+      renderBatchItems();
+    });
+  }
+
+  if (batchGenerateBtn) {
+    batchGenerateBtn.addEventListener("click", async () => {
+      if (state.batchItems.length === 0) {
+        alert("Please add at least one clip.");
+        return;
+      }
+      if (!state.selectedVoice) {
+        alert(M.errorNoVoice || "Please select a voice first.");
+        return;
+      }
+
+      state.isBatchGenerating = true;
+      batchGenerateBtn.disabled = true;
+      batchGenerateBtn.style.display = "none";
+      if (batchStopBtn) batchStopBtn.style.display = "inline-flex";
+      if (batchDownloadZip) batchDownloadZip.style.display = "none";
+      if (batchStatusMsg) {
+        batchStatusMsg.textContent = "Starting batch synthesis...";
+        batchStatusMsg.style.color = "var(--text-muted)";
+      }
+
+      state.batchController = new AbortController();
+
+      const payload = {
+        items: state.batchItems,
+        voice_path: state.selectedVoice.path,
+        language: "auto",
+        style: state.selectedStyle
+      };
+
+      try {
+        const res = await fetch("/api/batch/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: state.batchController.signal
+        });
+
+        if (!res.ok) throw new Error("Batch generation request failed.");
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n\n");
+          buffer = lines.pop();
+
+          for (const block of lines) {
+            if (!block.trim()) continue;
+            let eventType = "message";
+            let dataStr = "";
+
+            for (const line of block.split("\n")) {
+              if (line.startsWith("event:")) eventType = line.slice(6).trim();
+              if (line.startsWith("data:")) dataStr = line.slice(5).trim();
+            }
+
+            if (!dataStr) continue;
+            const data = JSON.parse(dataStr);
+
+            if (eventType === "clip_done") {
+              const playerBox = document.getElementById(`batch-player-${data.item_id}`);
+              if (playerBox) {
+                playerBox.style.display = "block";
+                const aud = playerBox.querySelector("audio");
+                if (aud) aud.src = data.audio_url;
+              }
+              if (batchStatusMsg) batchStatusMsg.textContent = `Completed clip #${data.index + 1}...`;
+            } else if (eventType === "batch_complete") {
+              if (batchDownloadZip) {
+                batchDownloadZip.href = data.zip_url;
+                batchDownloadZip.style.display = "inline-block";
+              }
+              if (batchStatusMsg) {
+                batchStatusMsg.textContent = "Batch generation complete.";
+                batchStatusMsg.style.color = "var(--text-main)";
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if (err.name !== "AbortError" && batchStatusMsg) {
+          batchStatusMsg.textContent = "Batch generation error.";
+          batchStatusMsg.style.color = "var(--danger)";
+        }
+      } finally {
+        state.isBatchGenerating = false;
+        batchGenerateBtn.disabled = false;
+        batchGenerateBtn.style.display = "inline-flex";
+        if (batchStopBtn) batchStopBtn.style.display = "none";
+      }
+    });
+  }
+
+  if (batchStopBtn) {
+    batchStopBtn.addEventListener("click", () => {
+      if (state.batchController) state.batchController.abort();
+      fetch("/api/generate/stop", { method: "POST" });
+    });
+  }
+
+  // ============================================================
+  // 8. Recent Generation History
   // ============================================================
   async function loadHistory() {
     try {
@@ -476,7 +718,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     historyContainer.innerHTML = "";
-    items.slice(0, 8).forEach(item => {
+    items.slice(0, 15).forEach(item => {
       const div = document.createElement("div");
       div.className = "history-item";
       div.innerHTML = `
@@ -506,11 +748,143 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  refreshHistoryBtn.addEventListener("click", loadHistory);
+  if (refreshHistoryBtn) {
+    refreshHistoryBtn.addEventListener("click", loadHistory);
+  }
 
   // ============================================================
-  // 8. Initialization
+  // 9. Settings & Telegram Bot Controller
+  // ============================================================
+  async function loadTelegramSettings() {
+    try {
+      const res = await fetch("/api/telegram/settings");
+      if (res.ok) {
+        const data = await res.json();
+        if (cfgHost && data.host) cfgHost.value = data.host;
+        if (cfgPort && data.port) cfgPort.value = data.port;
+        if (cfgToken && data.token) cfgToken.value = data.token;
+        if (cfgAllowedIds && data.allowed_ids !== undefined) cfgAllowedIds.value = data.allowed_ids;
+        if (cfgMaxWords && data.max_words) cfgMaxWords.value = data.max_words;
+        if (cfgMaxUsers && data.max_users !== undefined) cfgMaxUsers.value = data.max_users;
+      }
+    } catch {}
+  }
+
+  if (tokenEyeBtn) {
+    tokenEyeBtn.addEventListener("click", () => {
+      if (cfgToken.type === "password") {
+        cfgToken.type = "text";
+        tokenEyeBtn.textContent = "Hide";
+      } else {
+        cfgToken.type = "password";
+        tokenEyeBtn.textContent = "Show";
+      }
+    });
+  }
+
+  if (saveEnvBtn) {
+    saveEnvBtn.addEventListener("click", async () => {
+      saveEnvBtn.disabled = true;
+      saveEnvBtn.textContent = M.savingSettingsBtn || "Saving...";
+      saveEnvStatus.textContent = "";
+
+      try {
+        const res = await fetch("/api/telegram/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            host: cfgHost ? cfgHost.value.trim() : "127.0.0.1",
+            port: cfgPort ? cfgPort.value.trim() : "7860",
+            token: cfgToken ? cfgToken.value.trim() : "",
+            allowed_ids: cfgAllowedIds ? cfgAllowedIds.value.trim() : "",
+            max_words: cfgMaxWords ? parseInt(cfgMaxWords.value) || 60 : 60,
+            max_users: cfgMaxUsers ? parseInt(cfgMaxUsers.value) || 1 : 1
+          })
+        });
+
+        if (res.ok) {
+          saveEnvStatus.textContent = M.settingsSavedNotice || "Settings saved successfully.";
+          saveEnvStatus.style.color = "var(--text-main)";
+        } else {
+          saveEnvStatus.textContent = M.settingsError || "Error saving settings.";
+          saveEnvStatus.style.color = "var(--danger)";
+        }
+      } catch {
+        saveEnvStatus.textContent = M.settingsError || "Error saving settings.";
+        saveEnvStatus.style.color = "var(--danger)";
+      } finally {
+        saveEnvBtn.disabled = false;
+        saveEnvBtn.textContent = M.saveSettingsBtn || "Save settings";
+        setTimeout(() => { saveEnvStatus.textContent = ""; }, 4000);
+      }
+    });
+  }
+
+  async function checkTelegramStatus() {
+    if (!tgStatusText) return;
+    try {
+      const res = await fetch("/api/telegram/status");
+      if (res.ok) {
+        const data = await res.json();
+        tgStatusText.textContent = data.status;
+        if (data.status && data.status.toUpperCase().includes("RUNNING")) {
+          tgStatusText.classList.add("running");
+        } else {
+          tgStatusText.classList.remove("running");
+        }
+      }
+    } catch {
+      tgStatusText.textContent = "Offline";
+      tgStatusText.classList.remove("running");
+    }
+  }
+
+  if (startTgBtn) {
+    startTgBtn.addEventListener("click", async () => {
+      startTgBtn.disabled = true;
+      try {
+        await fetch("/api/telegram/start", { method: "POST" });
+        setTimeout(checkTelegramStatus, 1500);
+      } finally {
+        startTgBtn.disabled = false;
+      }
+    });
+  }
+
+  if (restartTgBtn) {
+    restartTgBtn.addEventListener("click", async () => {
+      restartTgBtn.disabled = true;
+      restartTgBtn.textContent = "Restarting...";
+      try {
+        await fetch("/api/telegram/restart", { method: "POST" });
+        setTimeout(checkTelegramStatus, 2000);
+      } finally {
+        restartTgBtn.disabled = false;
+        restartTgBtn.textContent = M.restartBotBtn || "Restart bot";
+      }
+    });
+  }
+
+  if (stopTgBtn) {
+    stopTgBtn.addEventListener("click", async () => {
+      stopTgBtn.disabled = true;
+      try {
+        await fetch("/api/telegram/stop", { method: "POST" });
+        setTimeout(checkTelegramStatus, 1000);
+      } finally {
+        stopTgBtn.disabled = false;
+      }
+    });
+  }
+
+  if (refreshTgBtn) {
+    refreshTgBtn.addEventListener("click", checkTelegramStatus);
+  }
+
+  // ============================================================
+  // 10. Initialization
   // ============================================================
   loadVoices();
   loadHistory();
+  renderBatchItems();
 });

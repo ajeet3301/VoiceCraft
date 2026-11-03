@@ -17,132 +17,268 @@
         </div>
         <button id="theme-toggle" class="theme-btn" type="button" aria-label="Toggle dark mode">Theme</button>
       </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="nav-tabs" role="tablist" aria-label="Main Navigation">
+        <button class="nav-tab active" data-tab="tab-studio" role="tab" aria-selected="true" type="button">Studio</button>
+        <button class="nav-tab" data-tab="tab-batch" role="tab" aria-selected="false" type="button">Batch clips</button>
+        <button class="nav-tab" data-tab="tab-history" role="tab" aria-selected="false" type="button">History</button>
+        <button class="nav-tab" data-tab="tab-settings" role="tab" aria-selected="false" type="button">Settings & bot</button>
+      </nav>
     </header>
 
     <!-- Main Workspace -->
     <main class="main-content">
-      <!-- Section 1: Voices -->
-      <section class="section" aria-labelledby="heading-voices">
-        <div class="section-header">
-          <h2 id="heading-voices" class="section-title">Voices</h2>
-          <button id="add-voice-toggle-btn" class="text-link" type="button">Add a voice</button>
-        </div>
-
-        <!-- Add Voice Form Panel -->
-        <div id="add-voice-panel" class="panel" style="display: none;">
-          <div class="form-group">
-            <label class="label" for="voice-name-input">Voice name</label>
-            <input
-              type="text"
-              id="voice-name-input"
-              class="input"
-              placeholder="For example, Tamanna or Ayushi"
-              maxlength="30"
-              autocomplete="off"
-            >
+      <!-- ======================================================== -->
+      <!-- TAB 1: STUDIO                                            -->
+      <!-- ======================================================== -->
+      <div id="tab-studio" class="tab-pane active" role="tabpanel">
+        <!-- Section 1: Voices -->
+        <section class="section" aria-labelledby="heading-voices">
+          <div class="section-header">
+            <h2 id="heading-voices" class="section-title">Voices</h2>
+            <button id="add-voice-toggle-btn" class="text-link" type="button">Add a voice</button>
           </div>
 
-          <div class="form-group">
-            <label class="label" for="voice-file-input">Voice recording</label>
-            <div id="voice-drop-area" class="drop-area" tabindex="0" role="button" aria-label="Choose an audio file">
-              <input type="file" id="voice-file-input" accept="audio/*" style="display: none;">
-              <span id="drop-text" class="drop-label">Choose an audio file (5 to 20 seconds works best)</span>
+          <!-- Add Voice Form Panel -->
+          <div id="add-voice-panel" class="panel" style="display: none;">
+            <div class="form-group">
+              <label class="label" for="voice-name-input">Voice name</label>
+              <input
+                type="text"
+                id="voice-name-input"
+                class="input"
+                placeholder="For example, Tamanna or Ayushi"
+                maxlength="30"
+                autocomplete="off"
+              >
             </div>
-            <div class="record-row">
-              <button id="mic-record-btn" class="btn btn-secondary" type="button">Record with microphone</button>
-              <span id="record-status" class="quiet-text" role="status" aria-live="polite"></span>
+
+            <div class="form-group">
+              <label class="label" for="voice-file-input">Voice recording</label>
+              <div id="voice-drop-area" class="drop-area" tabindex="0" role="button" aria-label="Choose an audio file">
+                <input type="file" id="voice-file-input" accept="audio/*" style="display: none;">
+                <span id="drop-text" class="drop-label">Choose an audio file (5 to 20 seconds works best)</span>
+              </div>
+              <div class="record-row">
+                <button id="mic-record-btn" class="btn btn-secondary" type="button">Record with microphone</button>
+                <span id="record-status" class="quiet-text" role="status" aria-live="polite"></span>
+              </div>
+            </div>
+
+            <div id="add-voice-status" class="status-msg" role="status" aria-live="polite"></div>
+
+            <div class="btn-row">
+              <button id="save-new-voice-btn" class="btn btn-primary" type="button">Save voice</button>
+              <button id="cancel-add-voice-btn" class="text-link" type="button">Cancel</button>
             </div>
           </div>
 
-          <div id="add-voice-status" class="status-msg" role="status" aria-live="polite"></div>
-
-          <div class="btn-row">
-            <button id="save-new-voice-btn" class="btn btn-primary" type="button">Save voice</button>
-            <button id="cancel-add-voice-btn" class="text-link" type="button">Cancel</button>
+          <!-- Saved Voices List -->
+          <div id="voices-list" class="voices-list" role="region" aria-label="Saved voices list">
+            <div class="quiet-text">Loading voices...</div>
           </div>
-        </div>
+        </section>
 
-        <!-- Saved Voices List -->
-        <div id="voices-list" class="voices-list" role="region" aria-label="Saved voices list">
-          <div class="quiet-text">Loading voices...</div>
-        </div>
-      </section>
-
-      <!-- Section 2: Text -->
-      <section class="section" aria-labelledby="heading-text">
-        <div class="section-header">
-          <label id="heading-text" class="section-title" for="text-input">Text</label>
-          <span id="char-count" class="quiet-text">0 characters</span>
-        </div>
-
-        <textarea
-          id="text-input"
-          class="textarea"
-          placeholder="Write what you would like spoken."
-          rows="5"
-          spellcheck="false"
-        ></textarea>
-
-        <div class="meta-row">
-          <span id="detected-lang" class="quiet-text">Detected language: Hindi</span>
-          <span class="quiet-text hint-text">Hindi, English, and Hinglish are supported.</span>
-        </div>
-      </section>
-
-      <!-- Section 3: Speaking Style -->
-      <section class="section" aria-labelledby="heading-style">
-        <label id="heading-style" class="section-title">Speaking style</label>
-        <div class="pills-row" id="style-pills" role="radiogroup" aria-label="Speaking style selection">
-          <button class="pill active" data-style="natural" type="button" role="radio" aria-checked="true">Natural</button>
-          <button class="pill" data-style="happy" type="button" role="radio" aria-checked="false">Happy</button>
-          <button class="pill" data-style="soft" type="button" role="radio" aria-checked="false">Soft</button>
-          <button class="pill" data-style="husky" type="button" role="radio" aria-checked="false">Husky</button>
-          <button class="pill" data-style="whisper" type="button" role="radio" aria-checked="false">Whisper</button>
-        </div>
-      </section>
-
-      <!-- Section 4: Action & Progress -->
-      <section class="section action-section" aria-label="Generation controls">
-        <button id="generate-btn" class="btn btn-primary btn-full" type="button" disabled>
-          Generate
-        </button>
-
-        <!-- Progress Block -->
-        <div id="progress-container" class="progress-container" style="display: none;" role="status" aria-live="polite">
-          <div class="progress-bar-track" aria-hidden="true">
-            <div id="progress-bar-fill" class="progress-bar-fill"></div>
+        <!-- Section 2: Text -->
+        <section class="section" aria-labelledby="heading-text">
+          <div class="section-header">
+            <label id="heading-text" class="section-title" for="text-input">Text</label>
+            <span id="char-count" class="quiet-text">0 characters</span>
           </div>
-          <div class="progress-meta">
-            <span id="progress-status-text" class="quiet-text">Generating. 0%. About 8 seconds remaining.</span>
-            <button id="stop-generation-btn" class="text-link danger-link" type="button">Stop</button>
+
+          <textarea
+            id="text-input"
+            class="textarea"
+            placeholder="Write what you would like spoken."
+            rows="5"
+            spellcheck="false"
+          ></textarea>
+
+          <div class="meta-row">
+            <span id="detected-lang" class="quiet-text">Detected language: Hindi</span>
+            <span class="quiet-text hint-text">Hindi, English, and Hinglish are supported.</span>
           </div>
-        </div>
+        </section>
 
-        <div id="status-notification" class="status-msg" role="alert" aria-live="polite"></div>
-      </section>
-
-      <!-- Section 5: Result -->
-      <section id="result-section" class="section result-section" style="display: none;" aria-labelledby="heading-result">
-        <h2 id="heading-result" class="section-title">Result</h2>
-        <div class="result-card">
-          <audio id="result-audio-player" class="audio-player" controls preload="metadata"></audio>
-          <div class="result-actions">
-            <a id="download-result-link" class="text-link" href="#" download="voice.wav">Download</a>
-            <button id="regenerate-btn" class="text-link" type="button">Generate again</button>
+        <!-- Section 3: Speaking Style -->
+        <section class="section" aria-labelledby="heading-style">
+          <label id="heading-style" class="section-title">Speaking style</label>
+          <div class="pills-row" id="style-pills" role="radiogroup" aria-label="Speaking style selection">
+            <button class="pill active" data-style="natural" type="button" role="radio" aria-checked="true">Natural</button>
+            <button class="pill" data-style="happy" type="button" role="radio" aria-checked="false">Happy</button>
+            <button class="pill" data-style="soft" type="button" role="radio" aria-checked="false">Soft</button>
+            <button class="pill" data-style="husky" type="button" role="radio" aria-checked="false">Husky</button>
+            <button class="pill" data-style="whisper" type="button" role="radio" aria-checked="false">Whisper</button>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <!-- Section 6: Recent Recordings -->
-      <section class="section history-section" aria-labelledby="heading-history">
-        <div class="section-header">
-          <h2 id="heading-history" class="section-title">Recent recordings</h2>
-          <button id="refresh-history-btn" class="text-link" type="button">Refresh</button>
-        </div>
-        <div id="history-container" class="history-list">
-          <div class="quiet-text">No recent recordings.</div>
-        </div>
-      </section>
+        <!-- Section 4: Action & Progress -->
+        <section class="section action-section" aria-label="Generation controls">
+          <button id="generate-btn" class="btn btn-primary btn-full" type="button" disabled>
+            Generate
+          </button>
+
+          <!-- Progress Block -->
+          <div id="progress-container" class="progress-container" style="display: none;" role="status" aria-live="polite">
+            <div class="progress-bar-track" aria-hidden="true">
+              <div id="progress-bar-fill" class="progress-bar-fill"></div>
+            </div>
+            <div class="progress-meta">
+              <span id="progress-status-text" class="quiet-text">Generating. 0%. About 8 seconds remaining.</span>
+              <button id="stop-generation-btn" class="text-link danger-link" type="button">Stop</button>
+            </div>
+          </div>
+
+          <div id="status-notification" class="status-msg" role="alert" aria-live="polite"></div>
+        </section>
+
+        <!-- Section 5: Result -->
+        <section id="result-section" class="section result-section" style="display: none;" aria-labelledby="heading-result">
+          <h2 id="heading-result" class="section-title">Result</h2>
+          <div class="result-card">
+            <audio id="result-audio-player" class="audio-player" controls preload="metadata"></audio>
+            <div class="result-actions">
+              <a id="download-result-link" class="text-link" href="#" download="voice.wav">Download</a>
+              <button id="regenerate-btn" class="text-link" type="button">Generate again</button>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- ======================================================== -->
+      <!-- TAB 2: BATCH CLIPS                                       -->
+      <!-- ======================================================== -->
+      <div id="tab-batch" class="tab-pane" role="tabpanel" style="display: none;">
+        <section class="section">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Batch generation</h2>
+              <p class="quiet-text">Generate multiple voice clips in sequence using the selected voice.</p>
+            </div>
+            <div class="batch-header-actions">
+              <button id="batch-add-btn" class="text-link" type="button">Add clip</button>
+              <button id="batch-paste-lines-btn" class="text-link" type="button" style="margin-left: 14px;">Paste lines</button>
+            </div>
+          </div>
+
+          <div id="batch-items-container" class="batch-items-list">
+            <!-- Dynamic batch items -->
+          </div>
+
+          <div class="batch-action-row" style="margin-top: 20px;">
+            <button id="batch-generate-btn" class="btn btn-primary" type="button">Generate all clips</button>
+            <button id="batch-stop-btn" class="btn btn-secondary" type="button" style="display: none;">Stop batch</button>
+            <a id="batch-download-zip" class="text-link" href="#" download="batch_clips.zip" style="display: none; margin-left: 14px;">Download all as ZIP</a>
+          </div>
+
+          <div id="batch-status-msg" class="status-msg" role="status" aria-live="polite"></div>
+        </section>
+      </div>
+
+      <!-- ======================================================== -->
+      <!-- TAB 3: HISTORY                                           -->
+      <!-- ======================================================== -->
+      <div id="tab-history" class="tab-pane" role="tabpanel" style="display: none;">
+        <section class="section history-section" aria-labelledby="heading-history">
+          <div class="section-header">
+            <h2 id="heading-history" class="section-title">Recent recordings</h2>
+            <button id="refresh-history-btn" class="text-link" type="button">Refresh</button>
+          </div>
+          <div id="history-container" class="history-list">
+            <div class="quiet-text">No recent recordings.</div>
+          </div>
+        </section>
+      </div>
+
+      <!-- ======================================================== -->
+      <!-- TAB 4: SETTINGS & BOT                                    -->
+      <!-- ======================================================== -->
+      <div id="tab-settings" class="tab-pane" role="tabpanel" style="display: none;">
+        <!-- Settings Form -->
+        <section class="section">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Studio settings</h2>
+              <p class="quiet-text">Manage bot limits and localhost connection parameters.</p>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="label" for="cfg-host">Server host</label>
+            <input type="text" id="cfg-host" class="input" value="127.0.0.1">
+          </div>
+
+          <div class="form-group">
+            <label class="label" for="cfg-port">Server port</label>
+            <input type="text" id="cfg-port" class="input" value="7860">
+          </div>
+
+          <div class="form-group">
+            <label class="label" for="cfg-token">Telegram bot token</label>
+            <div class="password-row">
+              <input type="password" id="cfg-token" class="input" placeholder="Token from @BotFather">
+              <button id="token-eye-btn" class="text-link" type="button">Show</button>
+            </div>
+            <p class="quiet-text hint-text" style="margin-top: 4px;">Saved securely to your local .env file.</p>
+          </div>
+
+          <div class="form-group">
+            <label class="label" for="cfg-allowed-ids">Authorized Telegram user IDs</label>
+            <input type="text" id="cfg-allowed-ids" class="input" placeholder="e.g. 8011886933">
+            <p class="quiet-text hint-text" style="margin-top: 4px;">Comma-separated Telegram user IDs allowed to interact with the bot.</p>
+          </div>
+
+          <div class="form-group">
+            <label class="label" for="cfg-max-words">Max words per request</label>
+            <input type="number" id="cfg-max-words" class="input" value="60" min="5" max="500">
+            <p class="quiet-text hint-text" style="margin-top: 4px;">Maximum text length the bot accepts in one request.</p>
+          </div>
+
+          <div class="form-group">
+            <label class="label" for="cfg-max-users">Max allowed users</label>
+            <input type="number" id="cfg-max-users" class="input" value="1" min="0" max="100">
+            <p class="quiet-text hint-text" style="margin-top: 4px;">Limits the total number of users allowed to use the bot (0 = unlimited).</p>
+          </div>
+
+          <div class="btn-row" style="margin-top: 20px;">
+            <button id="save-env-btn" class="btn btn-primary" type="button">Save settings</button>
+            <span id="save-env-status" class="quiet-text" role="status" aria-live="polite"></span>
+          </div>
+        </section>
+
+        <!-- Bot Controller -->
+        <section class="section">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Telegram bot controller</h2>
+              <p class="quiet-text">Control the background Telegram bot process.</p>
+            </div>
+          </div>
+
+          <div class="bot-status-row">
+            <span class="quiet-text">Bot status:</span>
+            <span id="tg-status-text" class="bot-status-pill">Checking...</span>
+          </div>
+
+          <div class="btn-row" style="margin-top: 16px;">
+            <button id="start-tg-btn" class="btn btn-primary" type="button">Start bot</button>
+            <button id="restart-tg-btn" class="btn btn-secondary" type="button">Restart bot</button>
+            <button id="stop-tg-btn" class="btn btn-secondary" type="button">Stop bot</button>
+            <button id="refresh-tg-btn" class="text-link" type="button" style="margin-left: 6px;">Check status</button>
+          </div>
+
+          <div class="panel" style="margin-top: 20px;">
+            <p class="label">Telegram Bot Link</p>
+            <a href="https://t.me/VoiceCraftBitchsBot" target="_blank" class="text-link" rel="noopener noreferrer">
+              t.me/VoiceCraftBitchsBot
+            </a>
+            <p class="quiet-text hint-text" style="margin-top: 6px;">
+              Send voice messages to save new voices, or send text to hear it spoken in that voice.
+            </p>
+          </div>
+        </section>
+      </div>
     </main>
 
     <!-- Footer -->

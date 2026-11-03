@@ -431,7 +431,8 @@ async def generate_speech_endpoint(req: GenerateRequest):
 
                     # Synthesize chunk with matching language setting
                     seg_lang = chunks_meta[idx]["lang"]
-                    wav = model.generate(
+                    wav = await asyncio.to_thread(
+                        model.generate,
                         chunk_text,
                         language_id=seg_lang,
                         audio_prompt_path=None,

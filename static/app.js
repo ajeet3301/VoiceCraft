@@ -1,9 +1,12 @@
 /* ============================================================
    Voice Studio - Minimal Client Application
-   Claude-inspired calm, quiet, and responsive behavior.
+   Calm, quiet, and responsive behavior.
+   Connects to messages.js for all user-facing wording.
    ============================================================ */
 
 document.addEventListener("DOMContentLoaded", () => {
+  const M = window.MESSAGES || {};
+
   // --- State ---
   const state = {
     theme: localStorage.getItem("voice_studio_theme") || "light",
@@ -61,10 +64,12 @@ document.addEventListener("DOMContentLoaded", () => {
     localStorage.setItem("voice_studio_theme", theme);
   }
 
-  themeToggle.addEventListener("click", () => {
-    applyTheme(state.theme === "light" ? "dark" : "light");
-  });
-  applyTheme(state.theme);
+  if (themeToggle) {
+    themeToggle.addEventListener("click", () => {
+      applyTheme(state.theme === "light" ? "dark" : "light");
+    });
+    applyTheme(state.theme);
+  }
 
   // ============================================================
   // 2. Load & Render Saved Voices
@@ -72,22 +77,22 @@ document.addEventListener("DOMContentLoaded", () => {
   async function loadVoices() {
     try {
       const res = await fetch("/api/voices");
+      if (!res.ok) throw new Error();
       const data = await res.json();
       state.voices = data.voices || [];
       renderVoices();
-    } catch (e) {
-      voicesListContainer.innerHTML = '<div class="quiet-text">Unable to load voices.</div>';
+    } catch {
+      voicesListContainer.innerHTML = `<div class="quiet-text">${M.loadingVoices || "Unable to load voices."}</div>`;
     }
   }
 
   function renderVoices() {
     if (!state.voices || state.voices.length === 0) {
-      voicesListContainer.innerHTML = '<div class="quiet-text">No saved voices. Click "Add a voice" above to begin.</div>';
+      voicesListContainer.innerHTML = `<div class="quiet-text">${M.noVoices || "No saved voices yet."}</div>`;
       updateGenerateState();
       return;
     }
 
-    // Default select first voice if none selected
     if (!state.selectedVoice && state.voices.length > 0) {
       state.selectedVoice = state.voices[0];
     }
@@ -108,7 +113,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const selectBtn = document.createElement("button");
       selectBtn.type = "button";
       selectBtn.className = "text-link";
-      selectBtn.textContent = isSelected ? "Selected" : "Select";
+      selectBtn.textContent = isSelected ? (M.voiceSelected || "Selected") : (M.selectVoiceAction || "Select");
       selectBtn.disabled = isSelected;
       selectBtn.addEventListener("click", () => {
         state.selectedVoice = voice;
@@ -118,9 +123,10 @@ document.addEventListener("DOMContentLoaded", () => {
       const deleteBtn = document.createElement("button");
       deleteBtn.type = "button";
       deleteBtn.className = "text-link danger-link";
-      deleteBtn.textContent = "Delete";
+      deleteBtn.textContent = M.deleteVoiceAction || "Delete";
       deleteBtn.addEventListener("click", async () => {
-        if (!confirm(`Delete voice ${voice.name}?`)) return;
+        const confirmMsg = M.confirmDeleteVoice ? M.confirmDeleteVoice(voice.name) : `Delete voice ${voice.name}?`;
+        if (!confirm(confirmMsg)) return;
         try {
           const dRes = await fetch(`/api/voices/${encodeURIComponent(voice.name)}`, { method: "DELETE" });
           if (dRes.ok) {
@@ -128,9 +134,11 @@ document.addEventListener("DOMContentLoaded", () => {
               state.selectedVoice = null;
             }
             loadVoices();
+          } else {
+            alert(M.voiceDeleteError || "Unable to delete voice.");
           }
-        } catch (e) {
-          alert("Could not delete voice: " + e.message);
+        } catch {
+          alert(M.voiceDeleteError || "Unable to delete voice.");
         }
       });
 
@@ -150,23 +158,30 @@ document.addEventListener("DOMContentLoaded", () => {
   addVoiceToggleBtn.addEventListener("click", () => {
     const isVisible = addVoicePanel.style.display !== "none";
     addVoicePanel.style.display = isVisible ? "none" : "block";
-    addVoiceToggleBtn.textContent = isVisible ? "Add a voice" : "Close";
+    addVoiceToggleBtn.textContent = isVisible ? (M.addVoiceLink || "Add a voice") : (M.closeAddVoiceLink || "Close");
     if (!isVisible) voiceNameInput.focus();
   });
 
   cancelAddVoiceBtn.addEventListener("click", () => {
     addVoicePanel.style.display = "none";
-    addVoiceToggleBtn.textContent = "Add a voice";
+    addVoiceToggleBtn.textContent = M.addVoiceLink || "Add a voice";
     resetAddVoiceForm();
   });
 
   voiceDropArea.addEventListener("click", () => voiceFileInput.click());
+  voiceDropArea.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      voiceFileInput.click();
+    }
+  });
 
   voiceFileInput.addEventListener("change", (e) => {
     const file = e.target.files[0];
     if (file) {
       state.audioBlob = file;
-      dropText.textContent = `${file.name} (${(file.size / 1024).toFixed(0)} KB)`;
+      const sizeKb = (file.size / 1024).toFixed(0);
+      dropText.textContent = `${file.name} (${sizeKb} KB)`;
       if (!voiceNameInput.value) {
         voiceNameInput.value = file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "");
       }
@@ -177,8 +192,8 @@ document.addEventListener("DOMContentLoaded", () => {
   micRecordBtn.addEventListener("click", async () => {
     if (state.mediaRecorder && state.mediaRecorder.state === "recording") {
       state.mediaRecorder.stop();
-      micRecordBtn.textContent = "Record from microphone";
-      recordStatus.textContent = "Recording stopped.";
+      micRecordBtn.textContent = M.recordMicBtn || "Record with microphone";
+      recordStatus.textContent = M.recordingStopped || "Recording finished.";
       return;
     }
 
@@ -193,33 +208,34 @@ document.addEventListener("DOMContentLoaded", () => {
 
       state.mediaRecorder.onstop = () => {
         state.audioBlob = new Blob(state.recordedChunks, { type: "audio/wav" });
-        dropText.textContent = `Recorded voice sample (${(state.audioBlob.size / 1024).toFixed(0)} KB)`;
+        const sizeKb = (state.audioBlob.size / 1024).toFixed(0);
+        dropText.textContent = M.dropTextRecorded ? M.dropTextRecorded(sizeKb) : `Recorded voice (${sizeKb} KB)`;
         stream.getTracks().forEach(t => t.stop());
       };
 
       state.mediaRecorder.start();
-      micRecordBtn.textContent = "Stop recording";
-      recordStatus.textContent = "Recording... speak naturally for 10-15 seconds.";
-    } catch (err) {
-      recordStatus.textContent = "Microphone access denied or unavailable.";
+      micRecordBtn.textContent = M.stopMicBtn || "Stop recording";
+      recordStatus.textContent = M.recordingStatus || "Recording. Speak naturally for 10 to 15 seconds.";
+    } catch {
+      recordStatus.textContent = M.micUnavailable || "Microphone access was denied or is unsupported.";
     }
   });
 
   saveNewVoiceBtn.addEventListener("click", async () => {
     const name = voiceNameInput.value.trim();
     if (!name) {
-      addVoiceStatus.textContent = "Please provide a name for this voice.";
+      addVoiceStatus.textContent = M.nameRequired || "Please enter a name for this voice.";
       addVoiceStatus.style.color = "var(--danger)";
       return;
     }
     if (!state.audioBlob) {
-      addVoiceStatus.textContent = "Please upload or record an audio sample.";
+      addVoiceStatus.textContent = M.sampleRequired || "Please select or record an audio sample.";
       addVoiceStatus.style.color = "var(--danger)";
       return;
     }
 
     saveNewVoiceBtn.disabled = true;
-    saveNewVoiceBtn.textContent = "Saving...";
+    saveNewVoiceBtn.textContent = M.savingVoiceBtn || "Saving...";
     addVoiceStatus.textContent = "Processing audio sample...";
     addVoiceStatus.style.color = "var(--text-muted)";
 
@@ -230,23 +246,23 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const res = await fetch("/api/voices/add", { method: "POST", body: formData });
       if (!res.ok) {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || "Could not save voice sample.");
       }
-      addVoiceStatus.textContent = `Saved ${name}.`;
+      addVoiceStatus.textContent = M.voiceSavedNotice ? M.voiceSavedNotice(name) : `Saved voice "${name}".`;
       addVoiceStatus.style.color = "var(--text-main)";
       setTimeout(() => {
         addVoicePanel.style.display = "none";
-        addVoiceToggleBtn.textContent = "Add a voice";
+        addVoiceToggleBtn.textContent = M.addVoiceLink || "Add a voice";
         resetAddVoiceForm();
         loadVoices();
-      }, 1200);
+      }, 1000);
     } catch (e) {
       addVoiceStatus.textContent = e.message;
       addVoiceStatus.style.color = "var(--danger)";
     } finally {
       saveNewVoiceBtn.disabled = false;
-      saveNewVoiceBtn.textContent = "Save voice";
+      saveNewVoiceBtn.textContent = M.saveVoiceBtn || "Save voice";
     }
   });
 
@@ -254,7 +270,7 @@ document.addEventListener("DOMContentLoaded", () => {
     voiceNameInput.value = "";
     voiceFileInput.value = "";
     state.audioBlob = null;
-    dropText.textContent = "Click to choose an audio file (5 to 20 seconds works best)";
+    dropText.textContent = M.dropTextDefault || "Choose an audio file (5 to 20 seconds works best)";
     recordStatus.textContent = "";
     addVoiceStatus.textContent = "";
   }
@@ -265,7 +281,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let detectTimeout = null;
   textInput.addEventListener("input", () => {
     const len = textInput.value.length;
-    charCount.textContent = `${len} character${len === 1 ? "" : "s"}`;
+    charCount.textContent = M.charCount ? M.charCount(len) : `${len} characters`;
     updateGenerateState();
 
     clearTimeout(detectTimeout);
@@ -275,7 +291,7 @@ document.addEventListener("DOMContentLoaded", () => {
   async function checkTextDetection() {
     const text = textInput.value.trim();
     if (!text) {
-      detectedLang.textContent = "Detected: Hindi (Devanagari)";
+      detectedLang.textContent = `${M.detectedLangPrefix || "Detected language: "}${M.detectedDefault || "Hindi"}`;
       return;
     }
     try {
@@ -286,18 +302,22 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       if (res.ok) {
         const data = await res.json();
-        detectedLang.textContent = `Detected: ${data.type_label}`;
+        detectedLang.textContent = `${M.detectedLangPrefix || "Detected language: "}${data.type_label}`;
       }
-    } catch (e) {}
+    } catch {}
   }
 
   // ============================================================
-  // 5. Style Pills
+  // 5. Speaking Style Selection
   // ============================================================
   stylePills.forEach(pill => {
     pill.addEventListener("click", () => {
-      stylePills.forEach(p => p.classList.remove("active"));
+      stylePills.forEach(p => {
+        p.classList.remove("active");
+        p.setAttribute("aria-checked", "false");
+      });
       pill.classList.add("active");
+      pill.setAttribute("aria-checked", "true");
       state.selectedStyle = pill.getAttribute("data-style");
     });
   });
@@ -309,13 +329,22 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ============================================================
-  // 6. Speech Synthesis Generation
+  // 6. Speech Generation (SSE Streaming)
   // ============================================================
   generateBtn.addEventListener("click", generateSpeech);
 
   async function generateSpeech() {
     const text = textInput.value.trim();
-    if (!text || !state.selectedVoice) return;
+    if (!text) {
+      statusNotification.textContent = M.errorEmptyText || "Please enter some text before generating.";
+      statusNotification.style.color = "var(--danger)";
+      return;
+    }
+    if (!state.selectedVoice) {
+      statusNotification.textContent = M.errorNoVoice || "Please select a voice before generating.";
+      statusNotification.style.color = "var(--danger)";
+      return;
+    }
 
     state.isGenerating = true;
     updateGenerateState();
@@ -324,7 +353,7 @@ document.addEventListener("DOMContentLoaded", () => {
     progressContainer.style.display = "block";
     statusNotification.textContent = "";
     progressBarFill.style.width = "4%";
-    progressStatusText.textContent = "Initializing...";
+    progressStatusText.textContent = M.generatingInit || "Starting generation...";
 
     const startTime = performance.now();
     state.activeController = new AbortController();
@@ -345,8 +374,8 @@ document.addEventListener("DOMContentLoaded", () => {
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.detail || "Unable to complete speech synthesis.");
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || M.errorGeneric);
       }
 
       const reader = response.body.getReader();
@@ -376,15 +405,16 @@ document.addEventListener("DOMContentLoaded", () => {
           const data = JSON.parse(dataStr);
 
           if (eventType === "start") {
-            progressStatusText.textContent = `Generating 1 of ${data.total_chunks}...`;
+            const total = data.total_chunks || 1;
+            progressStatusText.textContent = M.generatingChunk ? M.generatingChunk(1, total) : `Generating 1 of ${total}...`;
           } else if (eventType === "chunk") {
             const pct = Math.min(95, Math.round(((data.chunk_index + 1) / data.total_chunks) * 100));
             progressBarFill.style.width = `${pct}%`;
-            const elapsed = ((performance.now() - startTime) / 1000).toFixed(0);
-            progressStatusText.textContent = `Generating. ${pct}%. About ${elapsed}s elapsed.`;
+            const elapsed = Math.round((performance.now() - startTime) / 1000);
+            progressStatusText.textContent = M.generatingProgress ? M.generatingProgress(pct, elapsed) : `Generating. ${pct}%. About ${elapsed}s elapsed.`;
           } else if (eventType === "complete") {
             progressBarFill.style.width = "100%";
-            progressStatusText.textContent = "Ready.";
+            progressStatusText.textContent = M.generatingReady || "Ready.";
 
             // Show Result
             resultSection.style.display = "block";
@@ -395,15 +425,15 @@ document.addEventListener("DOMContentLoaded", () => {
             resultAudioPlayer.play().catch(() => {});
             loadHistory();
           } else if (eventType === "cancelled") {
-            progressStatusText.textContent = "Generation stopped.";
+            progressStatusText.textContent = M.stoppedStatus || "Generation stopped.";
           } else if (eventType === "error") {
-            throw new Error(data.error || "Generation error.");
+            throw new Error(data.error || M.errorGeneric);
           }
         }
       }
     } catch (err) {
       if (err.name !== "AbortError") {
-        statusNotification.textContent = "Unable to generate speech. Please try again in a moment.";
+        statusNotification.textContent = err.message || M.errorGeneric;
         statusNotification.style.color = "var(--danger)";
       }
     } finally {
@@ -431,16 +461,17 @@ document.addEventListener("DOMContentLoaded", () => {
   async function loadHistory() {
     try {
       const res = await fetch("/api/history");
+      if (!res.ok) throw new Error();
       const data = await res.json();
       renderHistory(data.items || []);
-    } catch (e) {
-      historyContainer.innerHTML = '<div class="quiet-text">Unable to load history.</div>';
+    } catch {
+      historyContainer.innerHTML = `<div class="quiet-text">${M.noHistory || "No recent recordings."}</div>`;
     }
   }
 
   function renderHistory(items) {
     if (!items || items.length === 0) {
-      historyContainer.innerHTML = '<div class="quiet-text">No previous generations found.</div>';
+      historyContainer.innerHTML = `<div class="quiet-text">${M.noHistory || "No recent recordings."}</div>`;
       return;
     }
 
@@ -454,10 +485,10 @@ document.addEventListener("DOMContentLoaded", () => {
           <span>${item.created_at} • ${item.duration_s}s</span>
         </div>
         <div class="history-actions">
-          <audio controls src="${item.audio_url}" style="height: 32px; width: 70%;"></audio>
-          <div>
-            <a class="text-link" href="${item.audio_url}" download="${item.filename}">Download</a>
-            <button class="text-link danger-link delete-hist-btn" data-filename="${item.filename}" style="margin-left: 12px;">Delete</button>
+          <audio controls src="${item.audio_url}"></audio>
+          <div class="history-links">
+            <a class="text-link" href="${item.audio_url}" download="${item.filename}">${M.downloadAction || "Download"}</a>
+            <button class="text-link danger-link delete-hist-btn" data-filename="${item.filename}">${M.deleteVoiceAction || "Delete"}</button>
           </div>
         </div>
       `;
@@ -470,7 +501,7 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
           const res = await fetch(`/api/history/${encodeURIComponent(fname)}`, { method: "DELETE" });
           if (res.ok) loadHistory();
-        } catch (e) {}
+        } catch {}
       });
     });
   }
@@ -478,7 +509,7 @@ document.addEventListener("DOMContentLoaded", () => {
   refreshHistoryBtn.addEventListener("click", loadHistory);
 
   // ============================================================
-  // Initialization
+  // 8. Initialization
   // ============================================================
   loadVoices();
   loadHistory();

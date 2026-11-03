@@ -79,14 +79,24 @@ def get_or_load_model() -> ChatterboxMultilingualTTS:
     return MODEL
 
 
+COND_PATH = VOICES_DIR / "my_voice.cond.pt"
+
 # Pre-load model & cached voice conditionals on startup
 try:
     _init_model = get_or_load_model()
     if MY_VOICE_PATH.exists():
         try:
-            print(f"[VoiceCraft] Pre-caching voice conditionals from {MY_VOICE_PATH.name}...")
-            _init_model.prepare_conditionals(str(MY_VOICE_PATH))
-            print("[VoiceCraft] Saved voice conditionals cached successfully.")
+            if COND_PATH.exists() and COND_PATH.stat().st_mtime >= MY_VOICE_PATH.stat().st_mtime:
+                print(f"[VoiceCraft] Loading precomputed conditionals from {COND_PATH.name}...")
+                _init_model.conds = torch.load(str(COND_PATH), map_location=getattr(_init_model, "device", DEVICE), weights_only=False)
+                print("[VoiceCraft] Precomputed voice conditionals loaded successfully.")
+            else:
+                print(f"[VoiceCraft] Pre-caching voice conditionals from {MY_VOICE_PATH.name}...")
+                _init_model.prepare_conditionals(str(MY_VOICE_PATH))
+                if hasattr(_init_model, "conds") and _init_model.conds is not None:
+                    torch.save(_init_model.conds, str(COND_PATH))
+                    print(f"[VoiceCraft] Saved voice conditionals to {COND_PATH.name}.")
+                print("[VoiceCraft] Saved voice conditionals cached successfully.")
         except Exception as ve_err:
             print(f"[VoiceCraft] Note: Saved voice pre-cache notice: {ve_err}")
 except Exception as e:

@@ -40,24 +40,38 @@ python multilingual_app.py
 
 ---
 
-## 🖥️ Web Studio Interface
+## 🖥️ Modern Web Studio Interface
 
-VoiceCraft provides a clean, two-page interface:
+VoiceCraft features a modern, responsive web studio designed for speed, simplicity, and flexibility:
 
-### Tab 1: 🎙️ VoiceCraft Studio
-1. **Your Voice**:
-   - Upload any audio file (`.wav`, `.m4a`, `.mp3`, `.flac`) or record directly from your microphone.
-   - Click **Save my voice** to store your voice permanently in `voices/my_voice.wav`.
-2. **Text to Speak**:
-   - **Single Text (Streaming)**: Enter any text, select your target language (default: English, with Hindi and 21 others), and click **🔊 Generate Speech**.
-   - As each sentence chunk finishes in memory, the **Live Audio Stream** player immediately begins playing it while subsequent sentences continue generating in the background.
-   - Click **🛑 Stop** at any time to cancel generation and immediately free memory.
-   - **Batch Mode**: Paste multiple sentences (one per line) and click **⚡ Generate All Clips** to produce all audio files at once.
-3. **Audio Outputs**:
-   - **Live In-Memory Audio Stream**: Plays chunks seamlessly back-to-back in RAM.
-   - **Final Master Audio Player**: Plays the completed, stitched continuous audio.
-   - **Download Final WAV**: Download the single final master `.wav` file.
-   - **Batch Outputs**: Gallery of all completed clips with a one-click **Download All Clips (.zip)** bundle.
+| Tab | Purpose |
+| :--- | :--- |
+| **🎙️ Studio** | Primary voice cloning & real-time streaming speech synthesis. Drag & drop audio, live word/char counters, language selector with flag icons, and instant sentence streaming. |
+| **📦 Batch Clips** | Generate multiple voice clips at once. Dynamically add/remove clips, paste multi-line scripts, generate all in memory, preview individually, and download a `.zip` archive. |
+| **📜 History** | Complete local archive of generated audio from `outputs/`. Instant waveform playback, search filter, duration/file-size badges, open folder, and one-click deletion. |
+| **⚙️ Settings & Bot** | Telegram bot control center (start/stop/status), token management, localhost port configuration, and advanced generation defaults. |
+
+### ⌨️ Keyboard Shortcuts
+- **`Ctrl + Enter`**: Start voice generation immediately from any text field.
+- **`Escape`**: Cancel active generation and stop playback.
+- **`Dark / Light Mode`**: Instant toggle via top-right theme switch (persists in `localStorage`).
+
+---
+
+## 🚀 Quick Start
+
+### 1. One-Click Launch (Windows)
+Double-click `run.bat` in the project root folder.  
+It activates the virtual environment, configures environment variables, starts the server, and launches your default browser at `http://127.0.0.1:7860`.
+
+### 2. Manual Launch
+```bash
+# Activate your virtual environment
+.\.venv\Scripts\activate
+
+# Launch VoiceCraft Studio Server
+python server.py
+```
 
 ### ⚙️ Advanced Audio & Streaming Configuration
 

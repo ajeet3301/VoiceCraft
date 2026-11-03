@@ -36,8 +36,8 @@ echo.
 :: Launch the default web browser after a brief delay
 start "" cmd /c "timeout /t 3 /nobreak >nul & start http://127.0.0.1:7860"
 
-:: Run the VoiceCraft Gradio application
-python multilingual_app.py
+:: Run the VoiceCraft Web Studio server
+python server.py
 
 if %ERRORLEVEL% NEQ 0 (
     echo.

@@ -10,8 +10,10 @@ pinned: false
 
 # 🎙️ VoiceCraft
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ajeet3301/VoiceCraft/blob/main/VoiceCraft_Colab.ipynb)
+
 > **High-Fidelity Multilingual Voice Cloning Studio & Telegram Bot**  
-> Powered by Chatterbox Multilingual TTS V3, Gradio, and Python.
+> Powered by Chatterbox Multilingual TTS V3, FastAPI, and Python.
 
 ---
 

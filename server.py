@@ -763,6 +763,17 @@ async def telegram_restart():
 # Serve static assets
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+
+@app.on_event("startup")
+async def on_startup():
+    token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN")
+    if token and token.strip() and token.strip() != "your_telegram_bot_token_here":
+        try:
+            print("[Startup] Starting background Telegram bot...")
+            start_telegram_bot()
+        except Exception as e:
+            print(f"[Startup] Telegram bot auto-start notice: {e}")
+
 if __name__ == "__main__":
     host = os.getenv("SERVER_HOST", "127.0.0.1")
     port = int(os.getenv("SERVER_PORT", "7860"))

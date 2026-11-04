@@ -6,12 +6,17 @@ Zero emojis, clean typography, single-message status flow, Hindi transliteration
 
 import asyncio
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+# Disable TensorFlow in Transformers to prevent ml_dtypes collision
+os.environ["USE_TF"] = "0"
+os.environ["USE_FLAX"] = "0"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 if sys.platform == "win32":
     try:

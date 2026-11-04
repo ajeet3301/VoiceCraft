@@ -12,6 +12,11 @@ import time
 import zipfile
 from pathlib import Path
 
+# Disable TensorFlow in Transformers to prevent ml_dtypes collision
+os.environ["USE_TF"] = "0"
+os.environ["USE_FLAX"] = "0"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+
 # Ensure UTF-8 console output
 if sys.platform == "win32":
     try:

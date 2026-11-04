@@ -10,6 +10,11 @@ import sys
 import zipfile
 from pathlib import Path
 
+# Disable TensorFlow in Transformers to prevent ml_dtypes collision
+os.environ["USE_TF"] = "0"
+os.environ["USE_FLAX"] = "0"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+
 # Ensure UTF-8 output encoding on Windows consoles
 if sys.platform == "win32":
     try:
@@ -371,7 +376,7 @@ def generate_speech_stream(
     keep_partial_on_cancel: bool = False,
     progress=gr.Progress(track_tqdm=True),
 ):
-    """
+    r"""
     Generator function that:
     1. Splits text into sentence chunks and synthesizes chunk by chunk.
     2. Keeps chunks ONLY IN MEMORY (tensors/numpy arrays); zero chunk files written to disk.

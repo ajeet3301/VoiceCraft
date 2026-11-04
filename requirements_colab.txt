@@ -2,6 +2,7 @@ diffusers==0.29.0
 transformers==4.49.0
 conformer==0.3.2
 safetensors==0.5.3
+ml_dtypes>=0.5.0
 librosa==0.11.0
 soundfile==0.14.0
 pyloudnorm==0.2.0

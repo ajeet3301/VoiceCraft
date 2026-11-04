@@ -1,3 +1,7 @@
+# Binaries
+cloudflared.exe
+*.exe
+
 # Virtual Environment
 .venv/
 venv/
